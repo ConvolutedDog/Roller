@@ -1,5 +1,5 @@
 """
-    codegen implementation for rprog
+codegen implementation for rprog
 """
 
 from os import close
@@ -26,6 +26,7 @@ from tvm.topi.cuda.tensor_intrin import (
 """
 
 DEBUG = False
+
 
 class CodeGeneratorR:
     def get_codegen_dict(self, rprog):
@@ -91,10 +92,18 @@ class CodeGeneratorR:
             iter_vars_compute = [
                 self.sche.get(
                     # self.sche.get_loops(self.sche.get_block("compute"))[i]
-                    self.sche.get_loops(self.sche.get_block(target_stage.split("_local")[0]))[i]
+                    self.sche.get_loops(
+                        self.sche.get_block(target_stage.split("_local")[0])
+                    )[i]
                 ).loop_var
                 # for i in range(len(self.sche.get_loops(self.sche.get_block("compute"))))
-                for i in range(len(self.sche.get_loops(self.sche.get_block(target_stage.split("_local")[0]))))
+                for i in range(
+                    len(
+                        self.sche.get_loops(
+                            self.sche.get_block(target_stage.split("_local")[0])
+                        )
+                    )
+                )
             ]
 
             if DEBUG:
@@ -108,20 +117,20 @@ class CodeGeneratorR:
                     var = iter_vars_compute_local[i]
                     self.iter_vars_map[iter_vars_compute[i].name] = var.name
                     self.iter_vars_map_reverse[var.name] = iter_vars_compute[i].name
-                    
+
             if DEBUG:
                 print("iter_vars_map: ", self.iter_vars_map)
                 print("iter_vars_map_reverse: ", self.iter_vars_map_reverse)
 
             target_loop = None
-            
+
             if DEBUG:
                 print("len(loops): ", len(loops))
                 for i in range(len(loops)):
                     print("loops: ", self.sche.get(loops[i]).loop_var)
             for loop in loops:
                 loop_var = self.sche.get(loop).loop_var
-                
+
                 if DEBUG:
                     print(loop_var.name)
                     print(axis, type(axis))
@@ -427,7 +436,9 @@ class CodeGeneratorR:
                     reg_tile = self.sche.cache_write(out, "local")
 
                 if DEBUG:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
 
             blck_axis = []
@@ -485,7 +496,9 @@ class CodeGeneratorR:
 
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -499,7 +512,9 @@ class CodeGeneratorR:
 
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -514,7 +529,9 @@ class CodeGeneratorR:
 
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -533,7 +550,9 @@ class CodeGeneratorR:
 
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -548,7 +567,9 @@ class CodeGeneratorR:
 
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -567,11 +588,47 @@ class CodeGeneratorR:
 
                     loops = self.sche.get_loops(block_compute)
 
-                    # self.sche.get(self.sche.decompose_reduction(block_compute, loops[0]))
-                    # self.sche.compute_inline(self.sche.get_block("compute_init"))
-                    # # block_compute_update = self.sche.get(self.sche.get_block(target_stage + "_update"))
-                    # # block_compute_update.name_hint = target_stage
-                    # target_stage += "_update"
+                    # Purpose: Optimize reduction operations by hoisting initialization
+                    #          out of hot loops
+                    # Ref: https://discuss.tvm.apache.org/t/optimizing-reduction-initialization-in-generated-cuda-code/18613
+                    # ------------------------------------------------------------
+                    # Original Problem:
+                    #   In reduction patterns (e.g., matrix multiplication), initialization
+                    #   (e.g., C[i,j] = 0) typically occurs INSIDE the reduction loop nest,
+                    #   guarded by a condition like:
+                    #     "if (k == 0): C[i,j] = 0"
+                    #   This causes two performance issues:
+                    #     1. Branch Divergence: Threads waste cycles checking the condition
+                    #        every iteration.
+                    #     2. Redundant Checks: Initialization only needs to run once, but
+                    #        the condition is evaluated N times.
+                    #
+                    # Solution: Decompose the reduction into two phases:
+                    #   1. Initialization Phase (runs once):
+                    #      - Sets output buffers to zero (e.g., C_init block)
+                    #      - Positioned OUTSIDE all computation loops
+                    #   2. Update Phase (runs in hot loops):
+                    #      - Pure computation without initialization checks (e.g., C_update
+                    #        block)
+                    #
+                    # Performance Impact:
+                    #   - Eliminates branch mispredictions (~20% speedup observed in generated
+                    #     CUDA kernels for a 5120 x 5120 x 5120 matrix multiplication operation).
+                    # ------------------------------------------------------------
+                    # How this code achieves it:
+                    #   - decompose_reduction(block_compute, loops[-2]):
+                    #     * Identifies the reduction block (e.g., matrix multiply accumulation)
+                    #     * Splits it at the SECOND-TO-LAST loop level
+                    #     * Creates two blocks:
+                    #       - {block_name}_init: Initializes output
+                    #       - {block_name}_update: Pure computation
+                    #   - target_stage += "_update":
+                    #     * Labels the current scheduling focus as the update phase
+                    #     * Ensures subsequent optimizations apply to right update phase only
+                    self.sche.get(
+                        self.sche.decompose_reduction(block_compute, loops[-2])
+                    )
+                    target_stage += "_update"
 
                     for i in range(len(loops)):
                         if DEBUG:
@@ -664,10 +721,12 @@ class CodeGeneratorR:
                         bind_idx = te.thread_axis(self.binding["reduce"][1])
                         self.sche[out].bind(reduce_axis[1], bind_idx)
                         self.sche[out].set_store_predicate(bind_idx.var.equal(0))
-            
+
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
@@ -706,10 +765,12 @@ class CodeGeneratorR:
                     for st in smem_tensor:
                         self.sche[st].compute_at(self.sche[out], reduce_axis[0])
                         self.cooperative_fetch(st, self.sche)
-            
+
             if DEBUG:
                 if not LatestTVM:
-                    mod = tvm.lower(self.sche, in_tensors + out_tensors, simple_mode=False)
+                    mod = tvm.lower(
+                        self.sche, in_tensors + out_tensors, simple_mode=False
+                    )
                     print(mod.script())
                 else:
                     self.sche.show()
