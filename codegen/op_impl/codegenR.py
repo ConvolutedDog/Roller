@@ -47,7 +47,13 @@ class CodeGeneratorR:
         return self.tiling
 
     def split_axis(
-        self, op, axis, sche=None, target_stage="compute_local", all_tensors=None
+        self,
+        op,
+        axis,
+        sche=None,
+        target_stage="compute_local",
+        all_tensors=None,
+        split_reduce=False,
     ):
         if sche == None:
             sche = self.sche
@@ -68,20 +74,15 @@ class CodeGeneratorR:
             and axis.var.name in self.tiling
         ):
             factors = self.tiling[axis.var.name]
-        elif hasattr(self, "iter_vars_map"):
-            # find reduce axis
-            for key, val in self.tiling.items():
-                if not key in self.iter_vars_map.keys():
-                    factors = val
-                    break
-        else:
-            raise Exception(
-                "axis.var.name not in self.tiling or self.iter_vars_map_reverse"
-            )
-
-        assert factors is not None
-
-        if LatestTVM:
+        elif (
+            isinstance(axis, tvm.tir.schedule.schedule.LoopRV)
+            and str(self.sche.get(axis).loop_var) in self.tiling
+        ):
+            factors = self.tiling[str(self.sche.get(axis).loop_var)]
+        elif (
+            isinstance(axis, tvm.tir.schedule.schedule.LoopRV)
+            and str(self.sche.get(axis).loop_var) not in self.tiling
+        ):
             # Should rename it to block_compute_local
             block_compute_local = self.sche.get_block(target_stage)
             loops = self.sche.get_loops(block_compute_local)
@@ -106,7 +107,7 @@ class CodeGeneratorR:
                 )
             ]
 
-            if DEBUG:
+            if not DEBUG:
                 print("iter_vars_compute_local:", iter_vars_compute_local)
                 print("iter_vars_compute:", iter_vars_compute)
 
@@ -118,44 +119,45 @@ class CodeGeneratorR:
                     self.iter_vars_map[iter_vars_compute[i].name] = var.name
                     self.iter_vars_map_reverse[var.name] = iter_vars_compute[i].name
 
+            if not split_reduce:
+                # Only split space axes
+                factor_key = self.iter_vars_map_reverse[
+                    str(self.sche.get(axis).loop_var)
+                ]
+                factors = self.tiling[str(factor_key)]
+            else:
+                # Only split reduce axes
+                for key in self.tiling.keys():
+                    if not key in self.iter_vars_map_reverse.values():
+                        # NOTE: This can only be useful when there is only one reduce axis.
+                        factor_key = key
+                        break
+                factors = self.tiling[factor_key]
+        else:
+            raise Exception("Can't find factors")
+        # elif hasattr(self, "iter_vars_map"):
+        #     # find reduce axis
+        #     for key, val in self.tiling.items():
+        #         if not key in self.iter_vars_map.keys():
+        #             factors = val
+        #             break
+        # else:
+        #     raise Exception(
+        #         "axis.var.name not in self.tiling or self.iter_vars_map_reverse"
+        #     )
+
+        assert factors is not None
+
+        if LatestTVM:
+            # Should rename it to block_compute_local
+            block_compute_local = self.sche.get_block(target_stage)
+            loops = self.sche.get_loops(block_compute_local)
+
             if DEBUG:
                 print("iter_vars_map: ", self.iter_vars_map)
                 print("iter_vars_map_reverse: ", self.iter_vars_map_reverse)
 
-            target_loop = None
-
-            if DEBUG:
-                print("len(loops): ", len(loops))
-                for i in range(len(loops)):
-                    print("loops: ", self.sche.get(loops[i]).loop_var)
-            for loop in loops:
-                loop_var = self.sche.get(loop).loop_var
-
-                if DEBUG:
-                    print(loop_var.name)
-                    print(axis, type(axis))
-                if not isinstance(axis, tvm.tir.schedule.schedule.LoopRV):
-                    if loop_var.name == self.iter_vars_map[axis.var.name]:
-                        target_loop = loop
-                        if DEBUG:
-                            print(
-                                "self.sche.get(loop).loop_var: ",
-                                self.sche.get(loop).loop_var,
-                                end="-" * 100,
-                            )
-                        break
-                else:
-                    axistmp = self.sche.get(axis).loop_var
-                    if loop_var.name == axistmp.name:
-                        target_loop = loop
-                        if DEBUG:
-                            print(
-                                "self.sche.get(loop).loop_var: ",
-                                self.sche.get(loop).loop_var,
-                                end="-" * 100,
-                            )
-                        break
-
+            target_loop = axis
             if target_loop is None:
                 raise ValueError(f"Unfound axis")
 
@@ -445,47 +447,99 @@ class CodeGeneratorR:
             vthd_axis = []
             thrd_axis = []
             tile_axis = []
-            for axis in self.sche[out].op.axis if not LatestTVM else out.op.axis:
-                # adjust self.tiling's space axis for proper smem load
-                # TODO: what if not two-level tiling structure?
-                if self.bank_size != 4:
-                    assert len(self.tiling[axis.var.name]) == 3
-                    if self.tiling[axis.var.name][-3] >= (self.bank_size // 4):
-                        self.tiling[axis.var.name][-3] = self.tiling[axis.var.name][
-                            -3
-                        ] // (self.bank_size // 4)
-                        self.tiling[axis.var.name][-1] = self.tiling[axis.var.name][
-                            -1
-                        ] * (self.bank_size // 4)
-                    else:
-                        print("shared mem tiling is too small.")
-                        self.tiling[axis.var.name][-1] = (
-                            self.tiling[axis.var.name][-1]
-                            * self.tiling[axis.var.name][-3]
-                        )
-                        self.tiling[axis.var.name][-3] = 1
-                    print("updated self.tiling: ", self.tiling)
 
-                bx, vx, tx, tn = self.split_axis(
-                    out,
-                    axis,
-                    sche=None,
-                    target_stage=target_stage + "_local",
-                    all_tensors=in_tensors + out_tensors,
+            if not LatestTVM:
+                for axis in self.sche[out].op.axis:
+                    # adjust self.tiling's space axis for proper smem load
+                    # TODO: what if not two-level tiling structure?
+                    if self.bank_size != 4:
+                        assert len(self.tiling[axis.var.name]) == 3
+                        if self.tiling[axis.var.name][-3] >= (self.bank_size // 4):
+                            self.tiling[axis.var.name][-3] = self.tiling[axis.var.name][
+                                -3
+                            ] // (self.bank_size // 4)
+                            self.tiling[axis.var.name][-1] = self.tiling[axis.var.name][
+                                -1
+                            ] * (self.bank_size // 4)
+                        else:
+                            print("shared mem tiling is too small.")
+                            self.tiling[axis.var.name][-1] = (
+                                self.tiling[axis.var.name][-1]
+                                * self.tiling[axis.var.name][-3]
+                            )
+                            self.tiling[axis.var.name][-3] = 1
+                        print("updated self.tiling: ", self.tiling)
+
+                    bx, vx, tx, tn = self.split_axis(
+                        out,
+                        axis,
+                        sche=None,
+                        target_stage=target_stage + ("_local" if reg_bool else ""),
+                        all_tensors=in_tensors + out_tensors,
+                    )
+
+                    if DEBUG:
+                        if not LatestTVM:
+                            mod = tvm.lower(
+                                self.sche, in_tensors + out_tensors, simple_mode=False
+                            )
+                            print(mod.script())
+
+                    # bx, tx, tn = self.split_axis(out, axis)
+                    blck_axis.append(bx)
+                    vthd_axis.append(vx)
+                    thrd_axis.append(tx)
+                    tile_axis.append(tn)
+            else:
+                block_compute = self.sche.get_block(
+                    target_stage + ("_local" if reg_bool else "")
                 )
+                looprvs = self.sche.get_loops(block_compute)
 
-                if DEBUG:
-                    if not LatestTVM:
-                        mod = tvm.lower(
-                            self.sche, in_tensors + out_tensors, simple_mode=False
-                        )
-                        print(mod.script())
+                print([self.sche.get(looprvs[i]).loop_var for i in range(len(looprvs))])
 
-                # bx, tx, tn = self.split_axis(out, axis)
-                blck_axis.append(bx)
-                vthd_axis.append(vx)
-                thrd_axis.append(tx)
-                tile_axis.append(tn)
+                iter_vars = self.sche.get(block_compute).iter_vars
+                iter_types = [iter_var.iter_type for iter_var in iter_vars]
+
+                # Now the IRModule is the initial state so we can get the iter_type using the loop index.
+                assert len(looprvs) == len(iter_vars)
+
+                for looprv in looprvs:
+                    # Only split the space axis
+                    if iter_types[looprvs.index(looprv)] == tvm.tir.IterVar.CommReduce:
+                        continue
+
+                    loop_var = str(self.sche.get(looprv).loop_var)
+                    if self.bank_size != 4:
+                        assert len(self.tiling[loop_var]) == 3
+                        if self.tiling[loop_var][-3] >= (self.bank_size // 4):
+                            self.tiling[loop_var][-3] = self.tiling[loop_var][-3] // (
+                                self.bank_size // 4
+                            )
+                            self.tiling[loop_var][-1] = self.tiling[loop_var][-1] * (
+                                self.bank_size // 4
+                            )
+                        else:
+                            print("shared mem tiling is too small.")
+                            self.tiling[loop_var][-1] = (
+                                self.tiling[loop_var][-1] * self.tiling[loop_var][-3]
+                            )
+                            self.tiling[loop_var][-3] = 1
+                        print("updated self.tiling: ", self.tiling)
+
+                    bx, vx, tx, tn = self.split_axis(
+                        None,
+                        looprv,
+                        sche=None,
+                        target_stage=target_stage + ("_local" if reg_bool else ""),
+                        all_tensors=in_tensors + out_tensors,
+                    )
+
+                    blck_axis.append(bx)
+                    vthd_axis.append(vx)
+                    thrd_axis.append(tx)
+                    tile_axis.append(tn)
+
             axis_order = blck_axis + vthd_axis + thrd_axis + tile_axis
             # print("[Split spatial axis]\n", axis_order)
 
@@ -616,7 +670,7 @@ class CodeGeneratorR:
                     #     CUDA kernels for a 5120 x 5120 x 5120 matrix multiplication operation).
                     # ------------------------------------------------------------
                     # How this code achieves it:
-                    #   - decompose_reduction(block_compute, loops[-2]):
+                    #   - decompose_reduction(block_compute, loops[3]):
                     #     * Identifies the reduction block (e.g., matrix multiply accumulation)
                     #     * Splits it at the SECOND-TO-LAST loop level
                     #     * Creates two blocks:
@@ -626,7 +680,7 @@ class CodeGeneratorR:
                     #     * Labels the current scheduling focus as the update phase
                     #     * Ensures subsequent optimizations apply to right update phase only
                     self.sche.get(
-                        self.sche.decompose_reduction(block_compute, loops[-2])
+                        self.sche.decompose_reduction(block_compute, loops[3])
                     )
                     target_stage += "_update"
 
@@ -667,12 +721,15 @@ class CodeGeneratorR:
                     new_reduce_axis = []
 
                     for axis in reduce_axis.copy():
+                        if self.sche.get(axis).extent == 1:
+                            continue
                         res = self.split_axis(
-                            reg_tile,
+                            None,
                             axis,
                             sche=None,
                             target_stage=target_stage,
                             all_tensors=in_tensors + out_tensors,
+                            split_reduce=True,
                         )
                         reduce_axis = reduce_axis + res
                         new_reduce_axis = new_reduce_axis + res
@@ -692,10 +749,6 @@ class CodeGeneratorR:
                     # self.sche.reorder(*axis_order) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
                     # space_fused = self.sche.fuse(*space_axis) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
                     # self.sche.unroll(space_fused) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
-
-                    if DEBUG:
-                        self.sche.show()
-
                 else:
                     self.sche[reg_tile].compute_at(self.sche[out], thrd_fused)
                     space_axis = []
@@ -712,7 +765,130 @@ class CodeGeneratorR:
                     self.sche[reg_tile].unroll(space_fused)
             else:
                 if LatestTVM:
-                    raise NotImplementedError("Not implemented for latest TVM")
+                    if DEBUG:
+                        self.sche.show()
+
+                    space_axis = []
+                    block_compute = self.sche.get_block(target_stage)
+                    if DEBUG:
+                        print(self.sche.get(block_compute).iter_vars)
+
+                    loops = self.sche.get_loops(block_compute)
+                    print([self.sche.get(loops[i]).loop_var for i in range(len(loops))])
+
+                    # Purpose: Optimize reduction operations by hoisting initialization
+                    #          out of hot loops
+                    # Ref: https://discuss.tvm.apache.org/t/optimizing-reduction-initialization-in-generated-cuda-code/18613
+                    # ------------------------------------------------------------
+                    # Original Problem:
+                    #   In reduction patterns (e.g., matrix multiplication), initialization
+                    #   (e.g., C[i,j] = 0) typically occurs INSIDE the reduction loop nest,
+                    #   guarded by a condition like:
+                    #     "if (k == 0): C[i,j] = 0"
+                    #   This causes two performance issues:
+                    #     1. Branch Divergence: Threads waste cycles checking the condition
+                    #        every iteration.
+                    #     2. Redundant Checks: Initialization only needs to run once, but
+                    #        the condition is evaluated N times.
+                    #
+                    # Solution: Decompose the reduction into two phases:
+                    #   1. Initialization Phase (runs once):
+                    #      - Sets output buffers to zero (e.g., C_init block)
+                    #      - Positioned OUTSIDE all computation loops
+                    #   2. Update Phase (runs in hot loops):
+                    #      - Pure computation without initialization checks (e.g., C_update
+                    #        block)
+                    #
+                    # Performance Impact:
+                    #   - Eliminates branch mispredictions (~20% speedup observed in generated
+                    #     CUDA kernels for a 5120 x 5120 x 5120 matrix multiplication operation).
+                    # ------------------------------------------------------------
+                    # How this code achieves it:
+                    #   - decompose_reduction(block_compute, loops[3]):
+                    #     * Identifies the reduction block (e.g., matrix multiply accumulation)
+                    #     * Splits it at the SECOND-TO-LAST loop level
+                    #     * Creates two blocks:
+                    #       - {block_name}_init: Initializes output
+                    #       - {block_name}_update: Pure computation
+                    #   - target_stage += "_update":
+                    #     * Labels the current scheduling focus as the update phase
+                    #     * Ensures subsequent optimizations apply to right update phase only
+                    self.sche.get(
+                        self.sche.decompose_reduction(block_compute, loops[3])
+                    )
+                    target_stage += "_update"
+                    if DEBUG:
+                        self.sche.show()
+
+                    block_compute = self.sche.get_block(target_stage)
+                    iter_vars = self.sche.get(block_compute).iter_vars
+                    iter_types = [iter_var.iter_type for iter_var in iter_vars]
+
+                    for i in range(len(loops)):
+                        if i >= len(loops) - len(iter_vars):
+                            if (
+                                iter_types[i - (len(loops) - len(iter_vars))]
+                                == tvm.tir.IterVar.CommReduce
+                            ):
+                                reduce_axis.append(loops[i])
+                            else:
+                                space_axis.append(loops[i])
+                        else:
+                            if DEBUG:
+                                print(
+                                    "loops: ",
+                                    self.sche.get(loops[i]).loop_var,
+                                    self.sche.get(loops[i]).kind,
+                                )
+                            if tvm.tir.ForKind.SERIAL == self.sche.get(loops[i]).kind:
+                                reduce_axis.append(loops[i])
+                            else:
+                                assert self.sche.get(loops[i]).kind in [
+                                    tvm.tir.ForKind.UNROLLED,
+                                    tvm.tir.ForKind.VECTORIZED,
+                                    tvm.tir.ForKind.PARALLEL,
+                                    tvm.tir.ForKind.THREAD_BINDING,
+                                ]
+                                space_axis.append(loops[i])
+
+                    if DEBUG:
+                        print(
+                            "space_axis: ",
+                            [
+                                self.sche.get(space_axis[i]).loop_var
+                                for i in range(len(space_axis))
+                            ],
+                        )
+                        print(
+                            "reduce_axis: ",
+                            [
+                                self.sche.get(reduce_axis[i]).loop_var
+                                for i in range(len(reduce_axis))
+                            ],
+                        )
+                    new_reduce_axis = []
+
+                    for axis in reduce_axis.copy():
+                        if self.sche.get(axis).extent == 1:
+                            continue
+                        res = self.split_axis(
+                            None,
+                            axis,
+                            sche=None,
+                            target_stage=target_stage,
+                            all_tensors=in_tensors + out_tensors,
+                        )
+                        reduce_axis = reduce_axis + res
+                        new_reduce_axis = new_reduce_axis + res
+                        if DEBUG:
+                            self.sche.show()
+
+                    # axis_order = reduce_axis + space_axis
+                    axis_order = new_reduce_axis + space_axis
+
+                    # self.sche.reorder(*axis_order) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
+                    # space_fused = self.sche.fuse(*space_axis) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
+                    # self.sche.unroll(space_fused) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
                 else:
                     for axis in self.sche[out].op.reduce_axis:
                         res = self.split_axis(out, axis)
@@ -758,7 +934,21 @@ class CodeGeneratorR:
                         )
             else:
                 if LatestTVM:
-                    raise NotImplementedError("Not implemented for latest TVM")
+                    for rt in reg_tensor:
+                        self.sche.compute_at(rt, new_reduce_axis[-1])
+                    for st in smem_tensor:
+                        if DEBUG:
+                            print(dir(st))
+                        old_axis = [
+                            str(self.sche.get(self.sche.get_loops(st)[i]).loop_var)
+                            for i in range(len(self.sche.get_loops(st)))
+                        ]
+                        self.sche.compute_at(st, new_reduce_axis[0])
+                        if DEBUG:
+                            self.sche.show()
+                        self.cooperative_fetch(st, self.sche, old_axis, None)
+                    if DEBUG:
+                        self.sche.show()
                 else:
                     for rt in reg_tensor:
                         self.sche[rt].compute_at(self.sche[out], reduce_axis[-1])

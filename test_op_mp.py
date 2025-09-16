@@ -27,7 +27,7 @@ parser.add_argument(
 parser.add_argument(
     "--reg_tiling", dest="reg_tiling", action="store_true", default=True
 )
-parser.add_argument("--st_align", dest="st_align", action="store_true")
+parser.add_argument("--st_align", dest="st_align", action="store_true", default=True)
 parser.add_argument("--fuse", dest="fuse", action="store_true")
 parser.add_argument("--schedule_fuse", dest="schedule_fuse", action="store_true")
 parser.add_argument(
@@ -40,6 +40,8 @@ parser.add_argument("--use_tc", dest="use_tc", action="store_true")
 parser.add_argument("--data_type", type=str, default="float32")
 parser.add_argument("--padding_threshold_cap", type=float, default=1.0)
 parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
+# If you have several GPUs with the same architecture, you can change
+# the num_threads to run them in parallel.
 parser.add_argument("--num_threads", type=int, default=1)
 
 args = parser.parse_args()
@@ -309,16 +311,14 @@ def get_tvm_source(
         )
         if LatestTVM:
             print(s.mod)
-            
+
             target = tvm.target.Target("cuda")
             mod = tvm.build(s.mod, target=target)
 
-            # print(mod.imported_modules[0].get_source())
             return mod.imported_modules[0].get_source()
         else:
             s.normalize()
             mod = tvm.lower(s, in_tensors + out_tensors, simple_mode=False)
-            # print(mod.script())
 
             func = tvm.build(s, in_tensors + out_tensors, "cuda")
             return func.imported_modules[0].get_source()
@@ -383,11 +383,6 @@ def compile_and_run_kernel(
         print("v" * 40)
         print(main_source)
         print("^" * 40)
-    # os.system("/usr/local/cuda/bin/nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {} && " \
-    #     "export CUDA_VISIBLE_DEVICES={} && "\
-    #     "/usr/local/cuda/bin/nvprof ./{} > {} 2>&1 && " \
-    #     "rm {} && " \
-    #     "rm {}.cu".format(file_name, file_name, device_id, file_name, log_name, file_name, file_name))
 
     if LatestTVM:
         os.system(
@@ -401,7 +396,6 @@ def compile_and_run_kernel(
                 file_name, file_name
             )
         )
-    os.system("export CUDA_VISIBLE_DEVICES={}".format(device_id))
 
     if LatestTVM:
         os.system(
