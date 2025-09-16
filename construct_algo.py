@@ -1,3 +1,8 @@
+# NOTE: This is a pseudo-code implementation of the Roller algorithm for
+# automated tile size optimization in multi-level memory hierarchies. Please
+# refer to the original paper (Figure 8: ROLLER's rProgram constructing
+# algorithm for a single core (e.g., an SM).) for more details.
+
 import numpy as np
 
 roller = Roller()
@@ -16,7 +21,9 @@ def IncreaseTile(tile, steps, mem, res):
         new_tile[dim] = steps[mem][dim].next()
         if model.Footprint(new_tile, mem) > mem.Capacity:
             continue
-        elif not model.IsPeakComputeTile(new_tile, mem) or model.MemLatency(new_tile, mem) > model.ComputeLatency(new_tile):
+        elif not model.IsPeakComputeTile(new_tile, mem) or model.MemLatency(
+            new_tile, mem
+        ) > model.ComputeLatency(new_tile):
             IncreaseTile(new_tile, steps, mem, res)
         else:
             res.append(new_tile)
@@ -28,6 +35,7 @@ def IncreaseTile(tile, steps, mem, res):
                 next_mem = device.NextMemLayer(mem)
                 new_steps = roller.GetAlignedSteps(next_mem)
                 IncreaseTile(new_tile, new_steps, next_mem, res)
+
 
 def construct_algo(expr):
     for mem in range(device.num_level):
