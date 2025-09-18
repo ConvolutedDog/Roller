@@ -2,6 +2,25 @@ import tvm
 from threading import Thread
 from utils import LatestTVM
 import sys
+import math
+from typing import Tuple, TYPE_CHECKING, Union, Optional
+
+if TYPE_CHECKING:
+    # Type checking only
+    from tvm.te import Schedule as TeSchedule
+    from tvm.tir import Schedule as TirSchedule
+
+    ScheduleType = Union[TeSchedule, TirSchedule]
+else:
+    # Runtime only
+    if not LatestTVM:
+        from tvm.te import Schedule as TeSchedule
+
+        ScheduleType = TeSchedule
+    else:
+        from tvm.tir import Schedule as TirSchedule
+
+        ScheduleType = TirSchedule
 
 if sys.version_info >= (3, 8):
     from typing import Literal
@@ -10,6 +29,7 @@ else:
 
 
 def get_axis_names(Tensor: tvm.te.Tensor):
+    """Get axis names"""
     if LatestTVM:
         saxis = [str(axis.var.name) for axis in Tensor.op.axis]
         raxis = [str(axis.var.name) for axis in Tensor.op.reduce_axis]
@@ -18,6 +38,48 @@ def get_axis_names(Tensor: tvm.te.Tensor):
         saxis = [axis.var.name for axis in s[Tensor].op.axis]
         raxis = [axis.var.name for axis in s[Tensor].op.reduce_axis]
     return saxis, raxis
+
+
+def showmod(sch: ScheduleType, tensor_list: Optional[Tuple[tvm.te.Tensor]]):
+    """Show the IRModule of schedule"""
+    print("=" * 80)
+    if LatestTVM:
+        print(tvm.lower(sch, tensor_list).script())
+    else:
+        sch.mod.show()
+    print("=" * 80)
+
+
+def getSpecifiedLoopRVs(
+    sch: ScheduleType, block: "BlockRV", iter_type
+) -> Tuple["LoopRV"]:
+    """Helper function to get specified loop RVs"""
+    alllooprvs = sch.get_loops(block)
+    targetlooprvs = []
+    itervars = sch.get(block).iter_vars
+    for i in range(len(itervars)):
+        itervar = itervars[i]
+        if itervar.iter_type == iter_type:
+            targetlooprvs.append(alllooprvs[len(alllooprvs) - len(itervars) + i])
+    return targetlooprvs
+
+
+def getSpatialLoopRVs(sch: ScheduleType, block: "BlockRV") -> Tuple["LoopRV"]:
+    """Helper function to get spatial LoopRVs"""
+    return getSpecifiedLoopRVs(sch, block, iter_type=tvm.tir.IterVar.DataPar)
+
+
+def getReduceLoopRVs(sch: ScheduleType, block: "BlockRV") -> Tuple["LoopRV"]:
+    """Helper function to get reduce LoopRVs"""
+    return getSpecifiedLoopRVs(sch, block, iter_type=tvm.tir.IterVar.CommReduce)
+
+
+def calculate_factors(
+    sch: ScheduleType, looprv: "LoopRV", factor: int
+) -> Tuple[int, int]:
+    """Helper function to transform old `factor` argument of `sch.split`
+    in TVM 0.8 to new `factors` argument of `sch.split` in LatestTVM"""
+    return [math.ceil(int(sch.get(looprv).extent) / factor), factor]
 
 
 def str_to_ms(string):

@@ -12,7 +12,13 @@ from .tc_intrin import (
 )
 import math
 import numpy as np
-from utils import LatestTVM
+from utils import (
+    LatestTVM,
+    showmod,
+    getSpatialLoopRVs,
+    getReduceLoopRVs,
+    calculate_factors,
+)
 from typing import Tuple, TYPE_CHECKING, Union, Optional
 from config import rProg, rTile
 
@@ -45,10 +51,6 @@ def schedule_tensorcore(
     """
     Schedule dense operator using Tensorcore
     """
-
-    # if len(B.op.input_tensors) == 1 and B.op.input_tensors[0] == A:
-    #    s[B].compute_inline()
-    # batch, out_dim = get_const_tuple(C.shape)
     Mdim, Ndim = C.shape
     s = tvm_schedule
     if not LatestTVM:
@@ -86,12 +88,7 @@ def schedule_tensorcore(
         )
 
     if verbose:
-        print("=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     # Extract Sokoban scheduling information
     #
@@ -171,10 +168,6 @@ def schedule_tensorcore(
         s[C].bind(block_i, block_x)
         s[C].bind(block_j, block_y)
     else:
-
-        def calculate_factors(looprv, factor: int) -> Tuple[int, int]:
-            return [math.ceil(int(s.get(looprv).extent) / factor), factor]
-
         block_factor_m = wmma_m * warp_row_tiles * block_row_warps
         block_factor_n = wmma_n * warp_col_tiles * block_col_warps
 
@@ -182,25 +175,20 @@ def schedule_tensorcore(
 
         m, n = loops_wmma_acc
 
-        block_i, mc = s.split(m, factors=calculate_factors(m, block_factor_m))
-        block_j, nc = s.split(n, factors=calculate_factors(n, block_factor_n))
+        block_i, mc = s.split(m, factors=calculate_factors(s, m, block_factor_m))
+        block_j, nc = s.split(n, factors=calculate_factors(s, n, block_factor_n))
 
-        mm, mmi = s.split(mc, factors=calculate_factors(mc, wmma_m))
-        nn, nni = s.split(nc, factors=calculate_factors(nc, wmma_n))
-        mm, mmii = s.split(mm, factors=calculate_factors(mm, warp_row_tiles))
-        nn, nnii = s.split(nn, factors=calculate_factors(nn, warp_col_tiles))
+        mm, mmi = s.split(mc, factors=calculate_factors(s, mc, wmma_m))
+        nn, nni = s.split(nc, factors=calculate_factors(s, nc, wmma_n))
+        mm, mmii = s.split(mm, factors=calculate_factors(s, mm, warp_row_tiles))
+        nn, nnii = s.split(nn, factors=calculate_factors(s, nn, warp_col_tiles))
 
         s.reorder(block_i, block_j, mm, nn, mmii, nnii, mmi, nni)
         s.bind(block_i, "blockIdx.x")
         s.bind(block_j, "blockIdx.y")
 
     if verbose:
-        print("i", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         s[C].bind(mm, thread_y)
@@ -213,26 +201,8 @@ def schedule_tensorcore(
         s.unroll(mmii)
         s.unroll(nnii)
 
-        # print(
-        #     [
-        #         s.get(looprv).loop_var
-        #         for looprv in [block_i, block_j, mm, nn, mmii, nnii, mmi, nni]
-        #     ]
-        # )
-        # [ax0_0,   ax1_0,   ax0_1_0_0, ax1_1_0_0, ax0_1_0_1, ax1_1_0_1, ax0_1_1, ax1_1_1]
-        # [block_i, block_j, mm,        nn,        mmii,      nnii,      mmi,     nni]
-        #
-        # print([s.get(blockrv).name_hint for blockrv in [AS, BS, AF, BF, CF]])
-        # [AS,         BS,         AF,                       BF,                       CF]
-        # ['A_shared', 'B_shared', 'A_shared_wmma.matrix_a', 'B_shared_wmma.matrix_b', 'compute_wmma.accumulator']
-
     if verbose:
-        print("ii", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         # Schedule for wmma computation
@@ -248,32 +218,14 @@ def schedule_tensorcore(
         s[CF].unroll(warp_i)
         s[CF].unroll(warp_j)
     else:
-
-        def getSpatialLoopRVs(
-            block: "BlockRV", iter_type=tvm.tir.IterVar.DataPar
-        ) -> Tuple["LoopRV"]:
-            alllooprvs = s.get_loops(block)
-            targetlooprvs = []
-            itervars = s.get(block).iter_vars
-            for i in range(len(itervars)):
-                itervar = itervars[i]
-                if itervar.iter_type == iter_type:
-                    targetlooprvs.append(
-                        alllooprvs[len(alllooprvs) - len(itervars) + i]
-                    )
-            return targetlooprvs
-
-        def getReduceLoopRVs(block: "BlockRV") -> Tuple["LoopRV"]:
-            return getSpatialLoopRVs(block, iter_type=tvm.tir.IterVar.CommReduce)
-
         block_compute = s.get_block("compute")
         s.compute_at(block_compute, nn)
-        warp_i, warp_j = getSpatialLoopRVs(block_compute)
-        warp_i, _ii = s.split(warp_i, factors=calculate_factors(warp_i, wmma_m))
-        warp_j, _jj = s.split(warp_j, factors=calculate_factors(warp_j, wmma_n))
-        (k,) = getReduceLoopRVs(block_compute)
-        k, _k = s.split(k, factors=calculate_factors(k, wmma_k))
-        ko, ki = s.split(k, factors=calculate_factors(k, rstep_size))
+        warp_i, warp_j = getSpatialLoopRVs(s, block_compute)
+        warp_i, _ii = s.split(warp_i, factors=calculate_factors(s, warp_i, wmma_m))
+        warp_j, _jj = s.split(warp_j, factors=calculate_factors(s, warp_j, wmma_n))
+        (k,) = getReduceLoopRVs(s, block_compute)
+        k, _k = s.split(k, factors=calculate_factors(s, k, wmma_k))
+        ko, ki = s.split(k, factors=calculate_factors(s, k, rstep_size))
         s.reorder(ko, ki, warp_i, warp_j, _ii, _jj, _k)
         s.unroll(ki)
         s.unroll(warp_i)
@@ -316,12 +268,7 @@ def schedule_tensorcore(
         initial_block = s.decompose_reduction(block_compute, nn)
 
     if verbose:
-        print("iii", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         # Schedule for  wmma_matrix_a load
@@ -334,20 +281,15 @@ def schedule_tensorcore(
         s[AF].unroll(i)
     else:
         s.compute_at(AF, ki)
-        m, i = getSpatialLoopRVs(AF)
-        m, m_ii = s.split(m, factors=calculate_factors(m, wmma_m))
-        i, i_jj = s.split(i, factors=calculate_factors(i, wmma_k))
+        m, i = getSpatialLoopRVs(s, AF)
+        m, m_ii = s.split(m, factors=calculate_factors(s, m, wmma_m))
+        i, i_jj = s.split(i, factors=calculate_factors(s, i, wmma_k))
         s.reorder(m, i, m_ii, i_jj)
         s.unroll(m)
         s.unroll(i)
 
     if verbose:
-        print("iv", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         # Schedule for  wmma_matrix_b load
@@ -360,20 +302,15 @@ def schedule_tensorcore(
         s[BF].unroll(n)
     else:
         s.compute_at(BF, ki)
-        i, n = getSpatialLoopRVs(BF)
-        i, i_ii = s.split(i, factors=calculate_factors(i, wmma_k))
-        n, n_ii = s.split(n, factors=calculate_factors(n, wmma_n))
+        i, n = getSpatialLoopRVs(s, BF)
+        i, i_ii = s.split(i, factors=calculate_factors(s, i, wmma_k))
+        n, n_ii = s.split(n, factors=calculate_factors(s, n, wmma_n))
         s.reorder(i, n, i_ii, n_ii)
         s.unroll(i)
         s.unroll(n)
 
     if verbose:
-        print("v", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     # Schedule for A's(B's) shared memory load
     def shared_shedule(stage, strides):
@@ -393,16 +330,16 @@ def schedule_tensorcore(
             s[stage].vectorize(vi)
         else:
             s.compute_at(stage, ko)
-            xo, yo = getSpatialLoopRVs(stage)
-            # NOTE: `index` of xo in getSpatialLoopRVs(stage) equals to 0.
+            xo, yo = getSpatialLoopRVs(s, stage)
+            # NOTE: `index` of xo in getSpatialLoopRVs(s, stage) equals to 0.
             s.storage_align(
                 stage, buffer_index=0, axis=0, factor=strides - 1, offset=strides
             )
             t = s.fuse(xo, yo)
-            t, vi = s.split(t, factors=calculate_factors(t, vec))
-            t, tx = s.split(t, factors=calculate_factors(t, warp_size))
-            t, ty = s.split(t, factors=calculate_factors(t, block_row_warps))
-            t, tz = s.split(t, factors=calculate_factors(t, block_col_warps))
+            t, vi = s.split(t, factors=calculate_factors(s, t, vec))
+            t, tx = s.split(t, factors=calculate_factors(s, t, warp_size))
+            t, ty = s.split(t, factors=calculate_factors(s, t, block_row_warps))
+            t, tz = s.split(t, factors=calculate_factors(s, t, block_col_warps))
             s.bind(ty, "threadIdx.y")
             s.bind(tz, "threadIdx.z")
             s.bind(tx, "threadIdx.x")
@@ -413,12 +350,7 @@ def schedule_tensorcore(
     shared_shedule(BS, BS_align)
 
     if verbose:
-        print("vi", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     shape = (wmma_m, wmma_n, wmma_k)
     AL_gemm = te.placeholder((wmma_m, wmma_k), name="AL_gemm", dtype=data_dtype)
@@ -466,12 +398,7 @@ def schedule_tensorcore(
         s.tensorize(m_ii, intrin_name)
 
     if verbose:
-        print("vii", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         s[BF].tensorize(
@@ -503,12 +430,7 @@ def schedule_tensorcore(
         s.tensorize(i_ii, intrin_name)
 
     if verbose:
-        print("viii", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         s[CF].tensorize(
@@ -529,12 +451,7 @@ def schedule_tensorcore(
         s.tensorize(s.get_loops(initial_block)[-2], intrin_name)
 
     if verbose:
-        print("ix", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     if not LatestTVM:
         s[C].tensorize(
@@ -546,12 +463,7 @@ def schedule_tensorcore(
         s.tensorize(mmi, intrin_name)
 
     if verbose:
-        print("x", "=" * 73)
-        if not LatestTVM:
-            print(tvm.lower(s, [A, B, C]).script())
-        else:
-            s.mod.show()
-        print("=" * 73)
+        showmod(s, [A, B, C])
 
     return s
 
@@ -560,7 +472,7 @@ BACKEND = "tvm"
 
 
 def tc_mm_main_template(
-    source: int,
+    source: str,
     M: int,
     K: int,
     N: int,
@@ -584,16 +496,15 @@ def tc_mm_main_template(
         "#include <mma.h>\n"
         "#include <string>\n"
         "\n"
-        "int M = {}, K = {}, N = {};\n"
+        "const int M = {}, K = {}, N = {};\n"
         "\n"
         "{}"
         "\n"
         "int main(int argc, char *argv[])\n"
         "{{\n"
-        "    std::string path;\n"
-        "    int input_size0 = M * K;\n"
-        "    int input_size1 = K * N;\n"
-        "    int output_size = N * M;\n"
+        "    const int input_size0 = M * K;\n"
+        "    const int input_size1 = K * N;\n"
+        "    const int output_size = N * M;\n"
         "\n"
         "    checkCudaErrors(cuInit(0));\n"
         "    CUdevice device;\n"
@@ -601,10 +512,11 @@ def tc_mm_main_template(
         "    CUcontext context;\n"
         "    checkCudaErrors(cuCtxCreate(&context, CU_CTX_SCHED_AUTO/*CU_CTX_SCHED_YIELD*/ | CU_CTX_MAP_HOST, device));\n"
         "\n"
-        "    half *Ah, *Bh;\n"
+        "    half *Ah, *Bh, *Ch;\n"
         "    half *Ad, *Bd, *Cd;\n"
         "    Ah = (half*)malloc(input_size0 * sizeof(half));\n"
         "    Bh = (half*)malloc(input_size1 * sizeof(half));\n"
+        "    Ch = (half*)malloc(output_size * sizeof(half));\n"
         "\n"
         "    cudaMalloc((void **)&Ad, input_size0 * sizeof(half));\n"
         "    cudaMalloc((void **)&Bd, input_size1 * sizeof(half));\n"
@@ -631,6 +543,18 @@ def tc_mm_main_template(
         "        {}<<<grid, block>>>((half*)Ad, (half*)Bd, (half*)Cd);\n"
         "        cudaDeviceSynchronize();\n"
         "    }}\n"
+        "\n"
+        "    cudaMemcpy(Ch, Cd, output_size * sizeof(half), cudaMemcpyDeviceToHost);\n"
+        "\n"
+        "    free(Ah);\n"
+        "    free(Bh);\n"
+        "    free(Ch);\n"
+        "\n"
+        "    cudaFree(Ad);\n"
+        "    cudaFree(Bd);\n"
+        "    cudaFree(Cd);\n"
+        "\n"
+        "    return 0;\n"
         "}}\n".format(
             M,
             K,
