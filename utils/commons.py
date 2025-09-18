@@ -1,6 +1,12 @@
 import tvm
 from threading import Thread
 from utils import LatestTVM
+import sys
+
+if sys.version_info >= (3, 8):
+    from typing import Literal
+else:
+    from typing_extensions import Literal
 
 
 def get_axis_names(Tensor: tvm.te.Tensor):
@@ -140,3 +146,6 @@ class MyThread(Thread):
             return self.result
         except Exception:
             return None
+
+
+Backend = Literal["tvm", "antares"]

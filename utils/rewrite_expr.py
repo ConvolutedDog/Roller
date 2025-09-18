@@ -4,8 +4,9 @@ import re
 import inspect
 from tvm import te
 from test_config import *
+from typing import Callable, Sequence
 
-'''
+"""
 rewrite_expr fuse contigous axis with the same type of the orginal expr,
 and return the new expr
 to use rewrite_expr, the original expr must follow the rules below:
@@ -65,60 +66,68 @@ to use rewrite_expr, the original expr must follow the rules below:
                 B = te.placeholder(shape, name="B")
                 C = te.compute(shape, lambda *i: A(*i) + B(*i), name="compute") # tensor var is C, while the name is compute
                 return [A, B], [C]
-'''
+"""
 
 
-def rewrite_expr(expr, shape, new_expr_name, transpose=True):
+def rewrite_expr(
+    expr: Callable, shape: Sequence[int], new_expr_name: str, transpose: bool = True
+):
     expr_out = expr(shape)
     ins, outs = expr_out[0], expr_out[1]
     out = outs[0]
-    out_name = out.name # assume only one output
+    out_name = out.name  # assume only one output
     ins_name = [i.name for i in ins]
-    saxis = out.op.axis # out axis
+    saxis = out.op.axis  # out axis
     raxis = out.op.reduce_axis
     saxis_name = [a.var.name for a in saxis]
     raxis_name = [a.var.name for a in raxis]
     loop_order = saxis_name + raxis_name
-    axis_set = set(loop_order)           
+    axis_set = set(loop_order)
 
-    expr_str = inspect.getsource(expr) # original expr
+    expr_str = inspect.getsource(expr)  # original expr
 
     # find output compute expr
-    match = '(    | )' + out_name + ' ?= ?te\.compute\((.|\n)+name ?= ?(\'|\")' + out_name + '(\'|\")\)'
+    match = (
+        "(    | )"
+        + out_name
+        + " ?= ?te\.compute\((.|\n)+name ?= ?('|\")"
+        + out_name
+        + "('|\")\)"
+    )
     x = re.search(match, expr_str)
     assert x
     out_expr = x.group()
-    assert out_expr != ''
+    assert out_expr != ""
     indent = out_expr[: out_expr.find(out_name)]
     # find original inputs indices and axis in output compute expr
     ins_str = ["" for i in range(len(ins_name))]
     for i in range(len(ins_name)):
-        start = out_expr.find(ins_name[i] + '[')
+        start = out_expr.find(ins_name[i] + "[")
         count = 1
         end = start
         for j in range(start + len(ins_name[i]) + 1, len(out_expr)):
             if count == 0:
                 end = j
                 break
-            if out_expr[j] == '[':
+            if out_expr[j] == "[":
                 count += 1
-            elif out_expr[j] == ']':
+            elif out_expr[j] == "]":
                 count -= 1
-        in_str = out_expr[start: end]
+        in_str = out_expr[start:end]
         ins_str[i] = in_str
 
     ins_axis = [[] for _ in range(len(ins_str))]
     ins_axis_split = [[] for _ in range(len(ins_str))]
     for i in range(len(ins_str)):
-        in_str = ins_str[i].replace(' ', '')
-        axes = in_str[len(ins_name[i]) + 1: -1].split(',')
+        in_str = ins_str[i].replace(" ", "")
+        axes = in_str[len(ins_name[i]) + 1 : -1].split(",")
         for a in axes:
-            a = re.split(r'([-+*/()%])|\s+', a)
+            a = re.split(r"([-+*/()%])|\s+", a)
             ins_axis_split[i].append(a)
             for a_i in a:
                 if a_i in axis_set:
                     ins_axis[i].append(a_i)
-     
+
     updated_ins_axis = [[] for _ in range(len(ins_str))]
     in_axis_dict = [{} for _ in range(len(ins_str))]
     out_axis_dict = {saxis_name[i]: i for i in range(len(saxis_name))}
@@ -158,21 +167,21 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     fusable = False
                     break
             for c in range(len(cand)):
-                if nxt not in cand[c]: 
+                if nxt not in cand[c]:
                     fusable = False
                     break
                 if cand[c][nxt] != cand[c][cur] + 1:
                     fusable = False
-                    break          
+                    break
             cur = nxt
             n += 1
         if fusable:
             sa_fusable.append((i, n))
-            sa_fused_axis['sa_fused' + str(len(sa_fused_axis))] = saxis_name[i: n]
+            sa_fused_axis["sa_fused" + str(len(sa_fused_axis))] = saxis_name[i:n]
 
     ra_fusable = []
     ra_fused_axis = {}
-    for i in range(len(raxis_name) -1):
+    for i in range(len(raxis_name) - 1):
         if len(ra_fusable) > 0 and ra_fusable[-1][-1] - 1 >= i:
             continue
         cur = raxis_name[i]
@@ -192,7 +201,7 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     fusable = False
                     break
             for c in range(len(cand)):
-                if nxt not in cand[c]: 
+                if nxt not in cand[c]:
                     fusable = False
                     break
                 if cand[c][nxt] != cand[c][cur] + 1:
@@ -202,8 +211,8 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
             n += 1
         if fusable:
             ra_fusable.append((i, n))
-            ra_fused_axis['ra_fused' + str(len(ra_fused_axis))] = raxis_name[i: n]
-    
+            ra_fused_axis["ra_fused" + str(len(ra_fused_axis))] = raxis_name[i:n]
+
     if len(sa_fused_axis) == 0 and len(ra_fused_axis) == 0:
         print("expr axis is not fusable")
         return expr
@@ -216,13 +225,13 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
         while i < len(axis):
             has_fused = False
             for s in sa_fused_axis:
-                if axis[i: i + len(sa_fused_axis[s])] == sa_fused_axis[s]:
+                if axis[i : i + len(sa_fused_axis[s])] == sa_fused_axis[s]:
                     fused_axis[j].append(s)
                     i += len(sa_fused_axis[s])
                     has_fused = True
                     break
             for r in ra_fused_axis:
-                if axis[i: i + len(ra_fused_axis[r])] == ra_fused_axis[r]:
+                if axis[i : i + len(ra_fused_axis[r])] == ra_fused_axis[r]:
                     fused_axis[j].append(r)
                     i += len(ra_fused_axis[r])
                     has_fused = True
@@ -281,7 +290,7 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     if ai in fs and aj in fs:
                         fusable = True
                         cache_idx.append(s)
-            
+
             if fusable:
                 ori = []
                 if ai in updated_sa_fused_axis:
@@ -292,8 +301,8 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     ori.extend(updated_sa_fused_axis[aj])
                 else:
                     ori.append(aj)
-                fused_name = ai + '_' + aj      
-                updated_sa_fused_axis[fused_name]  = ori
+                fused_name = ai + "_" + aj
+                updated_sa_fused_axis[fused_name] = ori
                 updated_sa_fused_axis.pop(ai, None)
                 updated_sa_fused_axis.pop(aj, None)
                 updated_saxis_name[j] = fused_name
@@ -305,7 +314,7 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     for t in range(len(fs)):
                         if fs[t] == aj:
                             fs[t] = fused_name
-                            break                    
+                            break
 
                     fs_set = fused_axis_set[idx]
                     fs_set.discard(ai)
@@ -338,7 +347,7 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     if ai in fs and aj in fs:
                         fusable = True
                         cache_idx.append(s)
-            
+
             if fusable:
                 ori = []
                 if ai in updated_ra_fused_axis:
@@ -349,8 +358,8 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     ori.extend(updated_ra_fused_axis[aj])
                 else:
                     ori.append(aj)
-                fused_name = ai + '_' + aj      
-                updated_ra_fused_axis[fused_name]  = ori
+                fused_name = ai + "_" + aj
+                updated_ra_fused_axis[fused_name] = ori
                 updated_ra_fused_axis.pop(ai, None)
                 updated_ra_fused_axis.pop(aj, None)
                 updated_raxis_name[j] = fused_name
@@ -374,10 +383,10 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                 else:
                     i += 1
                     j += 1
-            
+
         sa_fused_axis = updated_sa_fused_axis
         ra_fused_axis = updated_ra_fused_axis
-        
+
     # get fused axis length and pad length
     fused_axis_len = {}
     fused_axis_len_list = {}
@@ -387,11 +396,11 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
             if a not in fused_axis_len:
                 if a in sa_fused_axis:
                     ori_axis = sa_fused_axis[a]
-                    fused_axis_len[a] = ' * '.join([i.upper() for i in ori_axis])
+                    fused_axis_len[a] = " * ".join([i.upper() for i in ori_axis])
                     fused_axis_len_list[a] = [i.upper() for i in ori_axis]
                 elif a in ra_fused_axis:
                     ori_axis = ra_fused_axis[a]
-                    fused_axis_len[a] = ' * '.join([i.upper() for i in ori_axis])
+                    fused_axis_len[a] = " * ".join([i.upper() for i in ori_axis])
                     fused_axis_len_list[a] = [i.upper() for i in ori_axis]
                 else:
                     fused_axis_len[a] = a.upper()
@@ -404,40 +413,75 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
         for i in range(len(ori_axis)):
             oa = ori_axis[i]
             if i == 0:
-                fused_indice_map[oa] = fa + ' // (' + ' * '.join([a.upper() for a in ori_axis[i+1: ]]) + ')'
+                fused_indice_map[oa] = (
+                    fa
+                    + " // ("
+                    + " * ".join([a.upper() for a in ori_axis[i + 1 :]])
+                    + ")"
+                )
             elif i == len(ori_axis) - 1:
                 pre = ori_axis[i - 1]
-                fused_indice_map[oa] = '%'.join(fused_indice_map[pre].rsplit('//', 1))
+                fused_indice_map[oa] = "%".join(fused_indice_map[pre].rsplit("//", 1))
             else:
-                fused_indice_map[oa] = fa + ' % (' + ' * '.join([a.upper() for a in ori_axis[i: ]]) + ') // ' + '(' + ' * '.join([a.upper() for a in ori_axis[i+1: ]]) +')' 
-    
+                fused_indice_map[oa] = (
+                    fa
+                    + " % ("
+                    + " * ".join([a.upper() for a in ori_axis[i:]])
+                    + ") // "
+                    + "("
+                    + " * ".join([a.upper() for a in ori_axis[i + 1 :]])
+                    + ")"
+                )
+
     for fa in ra_fused_axis:
         ori_axis = ra_fused_axis[fa]
         for i in range(len(ori_axis)):
             oa = ori_axis[i]
             if i == 0:
-                fused_indice_map[oa] = fa + ' // (' + ' * '.join([a.upper() for a in ori_axis[i+1: ]]) + ')'
+                fused_indice_map[oa] = (
+                    fa
+                    + " // ("
+                    + " * ".join([a.upper() for a in ori_axis[i + 1 :]])
+                    + ")"
+                )
             elif i == len(ori_axis) - 1:
                 pre = ori_axis[i - 1]
-                fused_indice_map[oa] = '%'.join(fused_indice_map[pre].rsplit('//', 1))
+                fused_indice_map[oa] = "%".join(fused_indice_map[pre].rsplit("//", 1))
             else:
-                fused_indice_map[oa] = fa + ' % (' + ' * '.join([a.upper() for a in ori_axis[i: ]]) + ') // ' + '(' + ' * '.join([a.upper() for a in ori_axis[i+1: ]]) +')' 
-    
+                fused_indice_map[oa] = (
+                    fa
+                    + " % ("
+                    + " * ".join([a.upper() for a in ori_axis[i:]])
+                    + ") // "
+                    + "("
+                    + " * ".join([a.upper() for a in ori_axis[i + 1 :]])
+                    + ")"
+                )
+
     # get padded input expr
-    ins_pad_decl = '\n'
-    ins_pad = ''
+    ins_pad_decl = "\n"
+    ins_pad = ""
 
     fused_axis_len_pad = {}
-    axis_pad = ''
+    axis_pad = ""
     for a in fused_axis_len:
         l = fused_axis_len[a]
-        pad_axis_name = a + '_pad'
-        axis_pad += indent + pad_axis_name + ' = ' + l + '\n'
-        axis_pad += indent + 'if \'' + a + "\' in pad: " + pad_axis_name + ' += pad[\'' + a + '\']\n'
+        pad_axis_name = a + "_pad"
+        axis_pad += indent + pad_axis_name + " = " + l + "\n"
+        axis_pad += (
+            indent
+            + "if '"
+            + a
+            + "' in pad: "
+            + pad_axis_name
+            + " += pad['"
+            + a
+            + "']\n"
+        )
         fused_axis_len_pad[a] = pad_axis_name
-    ins_pad_decl += axis_pad  
-    
-    padded_ins_name = [n + '_pad' for n in ins_name]
+    ins_pad_decl += axis_pad
+
+    padded_ins_name = [n + "_pad" for n in ins_name]
     padded_ins_name_shape = []
     for i in range(len(ins_name)):
         name = ins_name[i]
@@ -449,7 +493,7 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
         padded_ins_name_shape.append((padded_name, shape_pad))
         condition = []
         for d in range(len(shape)):
-            condition.append(f_axis[d] + ' < ' + shape[d])
+            condition.append(f_axis[d] + " < " + shape[d])
         indice = []
         for s in in_axis_split:
             fused = []
@@ -458,52 +502,55 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
                     fused.append(fused_indice_map[a])
                 else:
                     fused.append(a)
-            indice.append(' '.join(fused))
-        
-        in_pad = indent + '{} = te.compute([{}],\n'\
-            '           lambda {}: te.if_then_else(te.all({}),\n'\
-            '           {}[{}], 0.0),\n'\
-            '           tag="{}", name="{}")\n'.format(
-            padded_name, 
-            ', '.join(shape_pad), 
-            ', '.join(f_axis), 
-            ', '.join(condition),
-            name,
-            ',\n                '.join(indice),
-            padded_name,
-            padded_name
-            )
+            indice.append(" ".join(fused))
 
-        ins_pad += in_pad + '\n'
+        in_pad = (
+            indent + "{} = te.compute([{}],\n"
+            "           lambda {}: te.if_then_else(te.all({}),\n"
+            "           {}[{}], 0.0),\n"
+            '           tag="{}", name="{}")\n'.format(
+                padded_name,
+                ", ".join(shape_pad),
+                ", ".join(f_axis),
+                ", ".join(condition),
+                name,
+                ",\n                ".join(indice),
+                padded_name,
+                padded_name,
+            )
+        )
+
+        ins_pad += in_pad + "\n"
 
     # get fused reduce axis
-    raxis_fuse = ''
+    raxis_fuse = ""
     for r in ra_fused_axis:
         ori_a = ra_fused_axis[r]
         r_fuse = indent + '{} = te.reduce_axis((0, {}), name="{}")\n'.format(
-            r,
-            ' * '.join([a.upper() for a in ori_a]),
-            r
-            )
+            r, " * ".join([a.upper() for a in ori_a]), r
+        )
         raxis_fuse += r_fuse + "\n"
 
     # get final output
-    final_out_name = out_name + '_unpad'
+    final_out_name = out_name + "_unpad"
     final_out_shape = [fused_axis_len[a] for a in fused_axis[-1]]
-    final_out_expr = out_name +'[' + ', '.join(fused_axis[-1]) + ']'
-    final_out = indent + '{} = te.compute([{}], lambda {}: {}, tag="{}", name="{}")\n'.format(
-        final_out_name, 
-        ', '.join(final_out_shape), 
-        ', '.join(fused_axis[-1]), 
-        final_out_expr,
-        final_out_name,
-        final_out_name
+    final_out_expr = out_name + "[" + ", ".join(fused_axis[-1]) + "]"
+    final_out = (
+        indent
+        + '{} = te.compute([{}], lambda {}: {}, tag="{}", name="{}")\n'.format(
+            final_out_name,
+            ", ".join(final_out_shape),
+            ", ".join(fused_axis[-1]),
+            final_out_expr,
+            final_out_name,
+            final_out_name,
         )
+    )
 
     # replace old output compute expr with fused one
-    out_shape_start = 'te.compute('
-    out_shape_end = 'lambda '
-    saxis_end = ':'
+    out_shape_start = "te.compute("
+    out_shape_end = "lambda "
+    saxis_end = ":"
 
     out_shape_start_pos = out_expr.find(out_shape_start)
     assert out_shape_start_pos != -1
@@ -516,29 +563,34 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
     saxis_end_pos = out_expr.find(saxis_end)
     assert saxis_end_pos != -1
 
-    out_shape = out_expr[out_shape_start_pos: out_shape_end_pos]
-    out_axis = out_expr[saxis_start_pos: saxis_end_pos]
+    out_shape = out_expr[out_shape_start_pos:out_shape_end_pos]
+    out_axis = out_expr[saxis_start_pos:saxis_end_pos]
 
     out_fused_axis = fused_axis[-1]
     out_fused_shape = [fused_axis_len_pad[a] for a in out_fused_axis]
-    new_out_expr = out_expr.replace(out_shape, '[' + ', '.join(out_fused_shape) + '], ', 1)\
-                            .replace(out_axis, ', '.join(out_fused_axis), 1)
+    new_out_expr = out_expr.replace(
+        out_shape, "[" + ", ".join(out_fused_shape) + "], ", 1
+    ).replace(out_axis, ", ".join(out_fused_axis), 1)
 
     for i in range(len(ins_str)):
-        new_out_expr = new_out_expr.replace(ins_str[i], padded_ins_name[i] + '[' +', '.join(fused_axis[i]) + ']')
+        new_out_expr = new_out_expr.replace(
+            ins_str[i], padded_ins_name[i] + "[" + ", ".join(fused_axis[i]) + "]"
+        )
 
-    raxis_match = 'axis ?= ?\[.+\]'
+    raxis_match = "axis ?= ?\[.+\]"
     m = re.search(raxis_match, new_out_expr)
     if m:
         raxis_str = m.group()
-        new_out_expr = new_out_expr.replace(raxis_str, 'axis=[' + ', '.join(list(ra_fused_axis.keys())) + ']')
+        new_out_expr = new_out_expr.replace(
+            raxis_str, "axis=[" + ", ".join(list(ra_fused_axis.keys())) + "]"
+        )
 
     # find unpack shape line
-    unpack_shape_match = re.search(indent + '.+ ?= ?shape\n', expr_str)
+    unpack_shape_match = re.search(indent + ".+ ?= ?shape\n", expr_str)
     assert unpack_shape_match
     unpack_shape_line = unpack_shape_match.group()
-    shape_dim = [d.strip() for d in unpack_shape_line.split('=')[0].strip().split(',')]
-    dim_index = {shape_dim[i] : i for i in range(len(shape_dim))}
+    shape_dim = [d.strip() for d in unpack_shape_line.split("=")[0].strip().split(",")]
+    dim_index = {shape_dim[i]: i for i in range(len(shape_dim))}
     fused_dim = {}
     for axis in fused_axis_len_list:
         index = []
@@ -546,59 +598,108 @@ def rewrite_expr(expr, shape, new_expr_name, transpose=True):
             index.append(dim_index[dim])
         fused_dim[axis] = index
 
-    new_unpack_shape_str = indent + 'if len(shape) != ' + str(len(shape_dim)) + ':\n'
+    new_unpack_shape_str = indent + "if len(shape) != " + str(len(shape_dim)) + ":\n"
     for sd in shape_dim:
-        new_unpack_shape_str += indent + indent + sd + ' = te.var(\'' + sd + '\')\n'
-    new_unpack_shape_str += indent + 'else:\n' + indent + unpack_shape_line
+        new_unpack_shape_str += indent + indent + sd + " = te.var('" + sd + "')\n"
+    new_unpack_shape_str += indent + "else:\n" + indent + unpack_shape_line
 
-    new_condition_return_line = indent + 'if for_rtile:\n'
+    new_condition_return_line = indent + "if for_rtile:\n"
     fused_all_axis = fused_axis[-1] + list(ra_fused_axis.keys())
-    new_condition_return_line += indent + indent + ', '.join([a.upper() for a in fused_all_axis]) + ' = shape\n'
-    new_condition_return_line += indent + indent + 'return ['
+    new_condition_return_line += (
+        indent + indent + ", ".join([a.upper() for a in fused_all_axis]) + " = shape\n"
+    )
+    new_condition_return_line += indent + indent + "return ["
     for i in range(len(ins_name)):
-        new_condition_return_line += '(\'' + ins_name[i] + '\', []), '
+        new_condition_return_line += "('" + ins_name[i] + "', []), "
     for i in range(len(padded_ins_name)):
-        new_condition_return_line += '(\'' + padded_ins_name[i] + '\', [' + ', '.join([a.upper() for a in fused_axis[i]]) + '])'
+        new_condition_return_line += (
+            "('"
+            + padded_ins_name[i]
+            + "', ["
+            + ", ".join([a.upper() for a in fused_axis[i]])
+            + "])"
+        )
         if i == len(padded_ins_name) - 1:
-            new_condition_return_line += '], ['
+            new_condition_return_line += "], ["
         else:
-            new_condition_return_line += ', '
-    new_condition_return_line += '(\'' + out_name + '\', [' + ', '.join([a.upper() for a in fused_axis[-1]]) + ']), '
-    new_condition_return_line += '(\'' + final_out_name + '\', [' + ', '.join([a.upper() for a in fused_axis[-1]]) + '])]\n\n'
+            new_condition_return_line += ", "
+    new_condition_return_line += (
+        "('"
+        + out_name
+        + "', ["
+        + ", ".join([a.upper() for a in fused_axis[-1]])
+        + "]), "
+    )
+    new_condition_return_line += (
+        "('"
+        + final_out_name
+        + "', ["
+        + ", ".join([a.upper() for a in fused_axis[-1]])
+        + "])]\n\n"
+    )
 
     new_unpack_shape_str = new_condition_return_line + new_unpack_shape_str
 
-    return_line = 'return [' + ins_name[0]
+    return_line = "return [" + ins_name[0]
     return_pos = expr_str.find(return_line)
     assert return_pos != -1
 
     all_ins = ins_name + padded_ins_name
-    new_return_line = indent + 'return [' + ', '.join(all_ins) + '], [' + out_name + ', ' + final_out_name + '], ' + str(fused_dim) + '\n'
+    new_return_line = (
+        indent
+        + "return ["
+        + ", ".join(all_ins)
+        + "], ["
+        + out_name
+        + ", "
+        + final_out_name
+        + "], "
+        + str(fused_dim)
+        + "\n"
+    )
 
     # find if for_rtile return line
-    for_rtile_return_match = 'return \[\((?s:.)+\]\)\]\n'
+    for_rtile_return_match = "return \[\((?s:.)+\]\)\]\n"
     x = re.search(for_rtile_return_match, expr_str)
     assert x
     for_rtile_return_line = x.group()
 
     # get added lines
-    added_lines = raxis_fuse + '\n' + ins_pad + '\n' + new_out_expr + '\n' + final_out + '\n' + new_return_line
+    added_lines = (
+        raxis_fuse
+        + "\n"
+        + ins_pad
+        + "\n"
+        + new_out_expr
+        + "\n"
+        + final_out
+        + "\n"
+        + new_return_line
+    )
 
-    comment_out_expr = indent + '\'\'\'\n' + out_expr  + '\n' + indent + '\'\'\'\n'
-    new_expr_str = expr_str.replace('if for_rtile:', ins_pad_decl) # add input_pad_decl
-    new_expr_str = new_expr_str.replace(out_expr, comment_out_expr) # comment original output compute expr
-    new_expr_str = new_expr_str.replace(return_line, '#' + return_line) # comment original return line
-    new_expr_str = new_expr_str.replace(for_rtile_return_line, '\n') # replace for rtile return line
-    new_expr_str = new_expr_str.replace(unpack_shape_line, new_unpack_shape_str) # replace original unpack shape line with new one
+    comment_out_expr = indent + "'''\n" + out_expr + "\n" + indent + "'''\n"
+    new_expr_str = expr_str.replace("if for_rtile:", ins_pad_decl)  # add input_pad_decl
+    new_expr_str = new_expr_str.replace(
+        out_expr, comment_out_expr
+    )  # comment original output compute expr
+    new_expr_str = new_expr_str.replace(
+        return_line, "#" + return_line
+    )  # comment original return line
+    new_expr_str = new_expr_str.replace(
+        for_rtile_return_line, "\n"
+    )  # replace for rtile return line
+    new_expr_str = new_expr_str.replace(
+        unpack_shape_line, new_unpack_shape_str
+    )  # replace original unpack shape line with new one
 
     new_expr_str += added_lines
 
     # replace original expr name with new one
-    ori_expr_start_pos = new_expr_str.find('def ')
-    ori_expr_end_pos = new_expr_str.find('(')
-    ori_expr_name = new_expr_str[ori_expr_start_pos + 4: ori_expr_end_pos]
-    if 'conv_expr' in ori_expr_name:
-        return globals()['fused_' + ori_expr_name]
+    ori_expr_start_pos = new_expr_str.find("def ")
+    ori_expr_end_pos = new_expr_str.find("(")
+    ori_expr_name = new_expr_str[ori_expr_start_pos + 4 : ori_expr_end_pos]
+    if "conv_expr" in ori_expr_name:
+        return globals()["fused_" + ori_expr_name]
     new_expr_str = new_expr_str.replace(ori_expr_name, new_expr_name, 1)
     print("############# new expr ####################")
     print(new_expr_str)

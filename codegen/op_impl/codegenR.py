@@ -1018,7 +1018,7 @@ class CodeGeneratorR:
             "reduce": [None, None],
         }
         self.get_codegen_dict(rprog)
-        print(self.tiling)
+        print("Tiling of rewrite_schedule: ", self.tiling)
         self.need_smem_tiling = smem_bool
         self.need_reg_tiling = reg_bool
         self.sche = schedule

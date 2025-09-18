@@ -10,12 +10,13 @@ import os
 from utils import *
 from test_config import *
 import argparse
-from typing import Union
+from typing import Union, Tuple
 from dbg_logger import dbglogger
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--op", type=str, default="matmul_expr")
+# M, N, K for matmul_expr, K is reduce axis.
 parser.add_argument("--shape", nargs="*", type=int, default=[5120, 5120, 5120])
 parser.add_argument("--rtile2_shape", nargs="*", type=int, default=[1, 1, 1])
 parser.add_argument("--rtile1_shape", nargs="*", type=int, default=[8, 8, 1])
@@ -28,17 +29,31 @@ parser.add_argument(
 parser.add_argument(
     "--reg_tiling", dest="reg_tiling", action="store_true", default=True
 )
-parser.add_argument("--st_align", dest="st_align", action="store_true", default=True)
-parser.add_argument("--fuse", dest="fuse", action="store_true")
-parser.add_argument("--schedule_fuse", dest="schedule_fuse", action="store_true")
+# This st_align argument has not been used in the experiments of the original paper.
+# Therefore, the related code has not been adapted for newer versions of TVM.
+parser.add_argument("--st_align", dest="st_align", action="store_true", default=False)
+# This fuse argument has not been used in the experiments of the original paper.
+# Therefore, the related code has not been adapted for newer versions of TVM.
+parser.add_argument("--fuse", dest="fuse", action="store_true", default=False)
+# For maymul_expr, the rewrite_schedule_fuse func has bugs. Therefore, the related
+# code has not been adapted for newer versions of TVM.
 parser.add_argument(
-    "--use_artificial_rtile ", dest="use_artificial_rtile", action="store_true"
+    "--schedule_fuse", dest="schedule_fuse", action="store_true", default=False
+)
+# Only test the tile size specified in parser.
+parser.add_argument(
+    "--use_artificial_rtile ",
+    dest="use_artificial_rtile",
+    action="store_true",
+    default=False,
 )
 parser.add_argument("--code_dir", type=str, default="./tmp_dir")
 parser.add_argument("--topk", type=int, default=10)
 parser.add_argument("--eval_bar", nargs="*", type=int, default=[1, 5, 10, 20, 50])
-parser.add_argument("--use_tc", dest="use_tc", action="store_true")
-parser.add_argument("--data_type", type=str, default="float32")
+# When using TC, data type should be "float16".
+parser.add_argument("--use_tc", dest="use_tc", action="store_true", default=True)
+# "float32" for CUDA Core, "float16" for Tensor Core.
+parser.add_argument("--data_type", type=str, default="float16")
 parser.add_argument("--padding_threshold_cap", type=float, default=1.0)
 parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
 
@@ -46,7 +61,14 @@ parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
 args = parser.parse_args()
 
 
-def main_template(backend: str, source, op, grids, blocks, times):
+def main_template(
+    backend: Backend,
+    source: str,
+    op: Op,
+    grids: Tuple[int, int, int],
+    blocks: Tuple[int, int, int],
+    times: int,
+) -> str:
     input_tensors = op.GetInputTensors(args.fuse or args.schedule_fuse)
     input_tensors_name = ["input" + str(i) for i in range(len(input_tensors))]
     output_tensors = op.GetOutputTensors()
@@ -227,7 +249,7 @@ def get_tvm_source(
         ConstructionPolicyRT,
     ],
     dtype: str,
-):
+) -> str:
     expr = rprog.Expression()
     # shape = rprog.Dimensions()
     shape = args.shape
@@ -279,6 +301,7 @@ def get_tvm_source(
             bank_size=arch.smem_bank_size,
         )
         func = tvm.build(s, ori_in + out_tensors, "cuda")
+        return func.imported_modules[0].get_source()
     else:
         if LatestTVM:
             pf = te.create_prim_func(in_tensors + out_tensors)
@@ -414,6 +437,7 @@ if __name__ == "__main__":
                 op.GetOutputTensors()[0],
                 rprog,
             )
+
             M, N, K = args.shape
             block_x, block_y, block_z = get_tc_block_size(
                 rprog.GetTile(0), rprog.GetTile(1)
@@ -422,6 +446,7 @@ if __name__ == "__main__":
             main_source = tc_mm_main_template(
                 source, M, K, N, grid_x, grid_y, block_x, block_y, block_z, 10
             )
+
         with open("{}.cu".format(file_name), "w") as ouf:
             ouf.write(main_source)
 
