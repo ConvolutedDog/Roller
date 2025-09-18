@@ -59,6 +59,13 @@ If you use ROLLER in your research, please cite the original paper:
 }
 ```
 
-## E. Acknowledgments
+## E. Roadmap & Contributing
+
+1. The codebase has not been fully organized and refactored.
+2. Scripts in the original Roller repository are not included and have not been thoroughly tested in this new environment.
+
+This repo is currently in its early stages. We are actively working towards a stable and feature-complete release. We welcome and appreciate any contributions!
+
+## F. Acknowledgments
 
 This implementation is based on the original ROLLER research from Microsoft Research and collaborating institutions. The original implementation can be found at: [microsoft/nnfusion](https://github.com/microsoft/nnfusion/tree/osdi22_artifact/artifacts).

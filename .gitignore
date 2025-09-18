@@ -3,3 +3,5 @@ logs/
 tmp_dir/
 .pkl_memoize_py3
 __pycache__/
+.env
+.vscode
