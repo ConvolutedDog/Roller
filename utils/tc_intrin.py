@@ -2,7 +2,7 @@ import tvm
 from tvm import te
 import sys
 from typing import List, Tuple
-from utils import LatestTVM
+from . import LatestTVM
 from tvm.script import tir as T
 
 

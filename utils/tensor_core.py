@@ -12,7 +12,7 @@ from .tc_intrin import (
 )
 import math
 import numpy as np
-from utils import (
+from . import (
     LatestTVM,
     showmod,
     getSpatialLoopRVs,

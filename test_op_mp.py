@@ -35,7 +35,7 @@ parser.add_argument("--st_align", dest="st_align", action="store_true", default=
 # This fuse argument has not been used in the experiments of the original paper.
 # Therefore, the related code has not been adapted for newer versions of TVM.
 parser.add_argument("--fuse", dest="fuse", action="store_true", default=False)
-# For maymul_expr, the rewrite_schedule_fuse func has bugs. Therefore, the related
+# For matmul_expr, the rewrite_schedule_fuse func has bugs. Therefore, the related
 # code has not been adapted for newer versions of TVM.
 parser.add_argument(
     "--schedule_fuse", dest="schedule_fuse", action="store_true", default=False
@@ -51,9 +51,9 @@ parser.add_argument("--code_dir", type=str, default="./tmp_dir")
 parser.add_argument("--topk", type=int, default=10)
 parser.add_argument("--eval_bar", nargs="*", type=int, default=[1, 5, 10, 20, 50])
 # When using TC, data type should be "float16".
-parser.add_argument("--use_tc", dest="use_tc", action="store_true", default=True)
+parser.add_argument("--use_tc", dest="use_tc", action="store_true", default=False)
 # "float32" for CUDA Core, "float16" for Tensor Core.
-parser.add_argument("--data_type", type=str, default="float16")
+parser.add_argument("--data_type", type=str, default="float32")
 parser.add_argument("--padding_threshold_cap", type=float, default=1.0)
 parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
 # If you have several GPUs with the same architecture, you can change
