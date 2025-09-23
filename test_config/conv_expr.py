@@ -1,13 +1,13 @@
 import tvm
 from tvm import te
 import os
-from utils import LatestTVM
+from utils import LatestTVM, deprecated
 
 FUSE_PAD = os.getenv("FUSE_PAD") == "1"
 CNHW = os.getenv("CONV_LAYOUT") == "CNHW"
-# python test_op.py --op conv_expr --shape 128 96 83 83 1 7 7 --rtile2_shape 1 1 1 1 1 1 1  --rtile1_shape 1 1 1 2 1 1 1 --rtile0_shape 2 1 4 96 7 7 1 --smem_tiling --reg_tiling --use_artificial_rtile
 
 
+@deprecated(exit_immediately=True)
 def conv_expr_S1D1P0(shape, dataType="float32", for_rtile=False, pad={}):
     S, D, P = 1, 1, 0
     N, F, HO, WO, C, KH, KW = shape
@@ -49,6 +49,7 @@ def conv_expr_S1D1P0(shape, dataType="float32", for_rtile=False, pad={}):
     return [data, kernel], [conv]
 
 
+@deprecated(exit_immediately=True)
 def conv_expr_S1D1P1(shape, dataType="float32", for_rtile=False, pad={}):
     S, D, P = 1, 1, 1
     N, F, HO, WO, C, KH, KW = shape
@@ -91,6 +92,7 @@ def conv_expr_S1D1P1(shape, dataType="float32", for_rtile=False, pad={}):
     return [data, kernel], [conv]
 
 
+@deprecated(exit_immediately=True)
 def conv_expr_S2D1P0(shape, dataType="float32", for_rtile=False, pad={}):
     S, D, P = 2, 1, 0
     N, F, HO, WO, C, KH, KW = shape

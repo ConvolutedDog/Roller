@@ -1,9 +1,13 @@
 import tvm
 from threading import Thread
-from utils import LatestTVM
+from . import LatestTVM
 import sys
 import math
 from typing import Tuple, TYPE_CHECKING, Union, Optional
+from tvm.tir.stmt_functor import post_order_visit
+import warnings
+from functools import wraps
+
 
 if TYPE_CHECKING:
     # Type checking only
@@ -26,6 +30,49 @@ if sys.version_info >= (3, 8):
     from typing import Literal
 else:
     from typing_extensions import Literal
+
+
+def deprecated(exit_immediately=True):
+    """Deprecated decorator"""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            warning_message = f"\033[91mFunction {func.__name__} is deprecated and cannot be used anymore.\033[0m"
+            if exit_immediately:
+                print(warning_message)
+                sys.exit()
+            else:
+                warnings.warn(
+                    warning_message,
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def get_blocks(sch: tvm.tir.Schedule, without_root=False):
+    """Get all blocks from a schedule"""
+    assert LatestTVM
+
+    blocks = {}
+
+    def update_blocks(node):
+        if isinstance(node, tvm.tir.Block):
+            if not (without_root and node.name_hint == "root"):
+                blocks[node.name_hint] = node
+
+    for gv in sch.mod.get_global_vars():
+        func = sch.mod[gv]
+        if isinstance(func, tvm.tir.PrimFunc):
+            post_order_visit(func.body, update_blocks)
+
+    return blocks
 
 
 def get_axis_names(Tensor: tvm.te.Tensor):

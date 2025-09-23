@@ -24,7 +24,7 @@ ROLLER is a fast and efficient tensor compilation system for deep learning workl
 ## C. Usage
 
 ```python3
-python test_op_mp.py
+python test_op.py
 ```
 
 ## D. Citation
@@ -51,8 +51,8 @@ If you use ROLLER in your research, please cite the original paper:
 ```bibtex
 @misc{unofficial_roller_impl,
   author = {Jianchao Yang},
-  title = {Unofficial ROLLER Implementation Using ​TVM 0.21+},
-  year = {2023},
+  title = {Unofficial ROLLER Implementation Using TVM 0.21+},
+  year = {2025},
   publisher = {GitHub},
   journal = {GitHub repository},
   howpublished = {\url{https://github.com/ConvolutedDog/Roller}}

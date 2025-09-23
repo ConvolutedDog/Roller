@@ -16,8 +16,12 @@ from typing import Union, Tuple
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--op", type=str, default="matmul_expr")
+# parser.add_argument("--op", type=str, default="fused_conv_expr_S1D1P1")
 # M, N, K for matmul_expr, K is reduce axis.
 parser.add_argument("--shape", nargs="*", type=int, default=[5120, 5120, 5120])
+# parser.add_argument(
+#    "--shape", nargs="*", type=int, default=[128, 128, 28, 28, 128, 3, 3]
+# )
 parser.add_argument("--rtile2_shape", nargs="*", type=int, default=[1, 1, 1])
 parser.add_argument("--rtile1_shape", nargs="*", type=int, default=[8, 8, 1])
 parser.add_argument("--rtile0_shape", nargs="*", type=int, default=[64, 128, 32])
@@ -93,6 +97,19 @@ def main_template(
             all_tensors_name.append(all_tensors_name[i])
             all_tensors_name.remove(all_tensors_name[i])
     s_parameters = ", ".join(["(float*)" + n + "d" for n in all_tensors_name])
+
+    # NOTE: Fix conv parameters bug, temporary solution, should be fixed later.
+    if LatestTVM:
+        if "conv" in output_tensors[0].op.name:
+            s_parameters = ", ".join(
+                [
+                    "(float*)" + n + "d"
+                    for n in [
+                        all_tensors_name[-1],
+                    ]
+                    + all_tensors_name[:-1]
+                ]
+            )
 
     for i in range(len(input_tensors_name)):
         name = input_tensors_name[i]
@@ -274,6 +291,17 @@ def get_tvm_source(
         out_tensor = out_tensors[0]
         write_tensor = out_tensors[-1]
         if LatestTVM:
+            # NOTE: Here, specifying the `for_tvm_source` parameter is a
+            # last-resort approach, because newer versions of TVM do not
+            # support performing compute_inline on the output block in an
+            # IRModule. Therefore, we need to set non-output blocks such
+            # as data_pad/kernel_pad for operations like convolution.
+            import inspect
+            if "for_tvm_source" in inspect.signature(expr).parameters:
+                expr_out = expr(shape, dtype, False, {}, for_tvm_source=True)
+                in_tensors, out_tensors = expr_out[0], expr_out[1]
+                out_tensor = out_tensors[0]
+
             pf = te.create_prim_func(in_tensors + out_tensors)
             mod = tvm.IRModule({"main": pf})
             # Create a TIR schedule
