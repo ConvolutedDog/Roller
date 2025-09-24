@@ -41,10 +41,15 @@ jobs:
         rsync -avz -e "ssh -p ${{ secrets.SSH_PORT || '22' }}" --delete \
           --exclude='.git' ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/Roller/
 
-    - name: Execute script on server
+    - name: Execute using LatestTVM
       run: |
         ssh -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
-          "cd /tmp/Roller && chmod +x ./tests/short-time.sh && ./tests/short-time.sh"
+          "cd /tmp/Roller && chmod +x ./tests/short-time-LatestTVM.sh && ./tests/short-time-LatestTVM.sh"
+
+    - name: Execute using OldTVM
+      run: |
+        ssh -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
+          "cd /tmp/Roller && chmod +x ./tests/short-time-OldTVM.sh && ./tests/short-time-OldTVM.sh"
 
     - name: Cleanup server
       run: |
