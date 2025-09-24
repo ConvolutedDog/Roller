@@ -439,23 +439,23 @@ def compile_and_run_kernel(
         print(main_source)
         print("^" * 40)
 
-    if LatestTVM:
-        os.system(
-            "nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
-                file_name, file_name
-            )
+    os.system(
+        "nvcc {}.cu -lcuda -gencode=arch=compute_{},code=compute_{} -o {}".format(
+            file_name, compute_capability, compute_capability, file_name
         )
-    else:
-        os.system(
-            "nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
-                file_name, file_name
-            )
-        )
+    )
 
-    if LatestTVM:
-        os.system("nvprof ./{} &> {}".format(file_name, log_name))
+    # NOTE: nvprof is not supported on devices with compute capability
+    # 8.0 and higher.
+    if compute_capability >= "80":
+        os.system(
+            "nsys nvprof -o /tmp/tmp-nsys-rep --force-overwrite ./{} &> {}".format(
+                file_name, log_name
+            )
+        )
     else:
         os.system("nvprof ./{} &> {}".format(file_name, log_name))
+
     os.system("rm {}".format(file_name))
     os.system("rm {}.cu".format(file_name))
 

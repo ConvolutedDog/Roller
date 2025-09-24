@@ -31,6 +31,8 @@ if sys.version_info >= (3, 8):
 else:
     from typing_extensions import Literal
 
+compute_capability = tvm.runtime.cuda(0).compute_version.replace(".", "")
+
 
 def deprecated(exit_immediately=True):
     """Deprecated decorator"""
@@ -134,21 +136,44 @@ def str_to_ms(string):
         return float(string[:-2])
     elif string.endswith("us"):
         return float(string[:-2]) / 1000
+    elif string.endswith("ns"):
+        return float(string[:-2]) / 1000 / 1000
     elif string.endswith("s"):
         return float(string[:-1]) * 1000
+    else:
+        raise ValueError(f"Not supported time string: {string}")
 
 
 def get_time_from_nvprof_file(out, backend="tvm"):
-    with open(out, "r") as inf:
-        lines = inf.readlines()
-        if backend == "tvm":
-            kernel_name = "default_function_kernel0" if not LatestTVM else "main_kernel"
-        if backend == "antares":
-            kernel_name = "template_op_kernel0"
-        for line in lines:
-            if kernel_name in line:
-                breaks = line.split()
-                return str_to_ms(breaks[-4])
+    if compute_capability >= "80":
+        with open(out, "r") as inf:
+            lines = inf.readlines()
+            if backend == "tvm":
+                kernel_name = (
+                    "default_function_kernel0" if not LatestTVM else "main_kernel"
+                )
+            if backend == "antares":
+                kernel_name = "template_op_kernel0"
+            for i in range(len(lines)):
+                if kernel_name in lines[i]:
+                    breaks = lines[i].split()
+                    unit_line = lines[i - 2]
+                    # unit_line.split()[7]: "(ns)"
+                    unit = unit_line.split()[7][1:-1]
+                    return str_to_ms(breaks[3].replace(",", "") + unit)
+    else:
+        with open(out, "r") as inf:
+            lines = inf.readlines()
+            if backend == "tvm":
+                kernel_name = (
+                    "default_function_kernel0" if not LatestTVM else "main_kernel"
+                )
+            if backend == "antares":
+                kernel_name = "template_op_kernel0"
+            for line in lines:
+                if kernel_name in line:
+                    breaks = line.split()
+                    return str_to_ms(breaks[-4])
     # kernel does not execute
     return 1e100
 
