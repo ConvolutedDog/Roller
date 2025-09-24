@@ -44,12 +44,14 @@ jobs:
     - name: Execute using LatestTVM
       run: |
         ssh -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
-          "cd /tmp/Roller && chmod +x ./tests/short-time-LatestTVM.sh && ./tests/short-time-LatestTVM.sh"
+          "cd /tmp/Roller && chmod +x ./tests/short-time-LatestTVM.sh \
+           export TVM_LIBRARY_PATH=${{ secrets.LATEST_TVM_LIBRARY_PATH }} && ./tests/short-time-LatestTVM.sh"
 
     - name: Execute using OldTVM
       run: |
         ssh -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
-          "cd /tmp/Roller && chmod +x ./tests/short-time-OldTVM.sh && ./tests/short-time-OldTVM.sh"
+          "cd /tmp/Roller && chmod +x ./tests/short-time-OldTVM.sh \
+           export TVM_LIBRARY_PATH=${{ secrets.OLD_TVM_LIBRARY_PATH }} && ./tests/short-time-OldTVM.sh"
 
     - name: Cleanup server
       run: |
