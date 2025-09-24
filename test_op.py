@@ -16,9 +16,9 @@ from dbg_logger import dbglogger
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--op", type=str, default="matmul_expr")
-# parser.add_argument("--op", type=str, default="fused_conv_expr_S1D1P1")
+# parser.add_argument("--op", type=str, default="fused_conv_bias_expr_S1D1P1")
 # M, N, K for matmul_expr, K is reduce axis.
-parser.add_argument("--shape", nargs="*", type=int, default=[5120, 5120, 5120])
+parser.add_argument("--shape", nargs="*", type=int, default=[4096, 4096, 4096])
 # parser.add_argument(
 #    "--shape", nargs="*", type=int, default=[128, 128, 28, 28, 128, 3, 3]
 # )
@@ -46,7 +46,7 @@ parser.add_argument(
 )
 # Only test the tile size specified in parser.
 parser.add_argument(
-    "--use_artificial_rtile ",
+    "--use_artificial_rtile",
     dest="use_artificial_rtile",
     action="store_true",
     default=False,
@@ -256,7 +256,7 @@ def get_pad(rprog: rProg, out_tensor: tvm.te.Tensor):
 
 def get_tvm_source(
     rprog: rProg,
-    arch: Union[Arch, IPU, K80, MI50, V100],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
     policy: Union[
         NaivePolicy,
         BuildingBlockPolicy,
@@ -327,6 +327,7 @@ def get_tvm_source(
             # IRModule. Therefore, we need to set non-output blocks such
             # as data_pad/kernel_pad for operations like convolution.
             import inspect
+
             if "for_tvm_source" in inspect.signature(expr).parameters:
                 expr_out = expr(shape, dtype, False, {}, for_tvm_source=True)
                 in_tensors, out_tensors = expr_out[0], expr_out[1]
@@ -484,25 +485,21 @@ if __name__ == "__main__":
 
         if LatestTVM:
             os.system(
-                "/usr/local/cuda-12.4/bin/nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
+                "nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
                     file_name, file_name
                 )
             )
         else:
             os.system(
-                "/usr/local/cuda-10.2/bin/nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
+                "nvcc {}.cu -lcuda -gencode=arch=compute_70,code=compute_70 -o {}".format(
                     file_name, file_name
                 )
             )
 
         if LatestTVM:
-            os.system(
-                "/usr/local/cuda-12.4/bin/nvprof ./{} &> {}".format(file_name, log_name)
-            )
+            os.system("nvprof ./{} &> {}".format(file_name, log_name))
         else:
-            os.system(
-                "/usr/local/cuda-10.2/bin/nvprof ./{} &> {}".format(file_name, log_name)
-            )
+            os.system("nvprof ./{} &> {}".format(file_name, log_name))
 
         os.system("rm {}".format(file_name))
         os.system("rm {}.cu".format(file_name))

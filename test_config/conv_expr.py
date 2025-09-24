@@ -563,6 +563,7 @@ def fused_conv_bias_expr_S1D1P0(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (
@@ -765,6 +766,7 @@ def fused_conv_bias_relu_expr_S1D1P0(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (
@@ -886,6 +888,7 @@ def fused_conv_bias_expr_S1D1P1(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (
@@ -1127,6 +1130,7 @@ def fused_conv_bias_relu_expr_S1D1P1(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (
@@ -1228,6 +1232,7 @@ def fused_conv_bias_expr_S2D1P0(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (
@@ -1430,6 +1435,7 @@ def fused_conv_bias_relu_expr_S2D1P0(
     )
 
     if for_tvm_source:
+        # TODO: The generated CUDA code has no bias now.
         return [data, kernel, bias], [conv]
 
     return (

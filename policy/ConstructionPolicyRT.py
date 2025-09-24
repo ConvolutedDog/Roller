@@ -19,7 +19,7 @@ def size_of(dtype):
 
 
 def lcm(x, y):
-    return x * y // math.gcd(x, y) # Least Common Multiple
+    return x * y // math.gcd(x, y)  # Least Common Multiple
 
 
 def num_tiles(large_tile, base_tile):
@@ -31,7 +31,7 @@ def num_tiles(large_tile, base_tile):
 
 def eligible(
     op: Op,
-    arch: Union[Arch, IPU, K80, MI50, V100],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
     rprog: rProg,
     mem_level,
     tile_tensor="output",
@@ -149,7 +149,7 @@ class ConstructionPolicyRT(PolicyBase):
     def __init__(
         self,
         op: Op,
-        arch: Union[Arch, IPU, K80, MI50, V100],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
         smem_tiling=False,
         reg_tiling=False,
         st_align=False,

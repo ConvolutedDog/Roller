@@ -29,7 +29,7 @@ class PolicyBase:
     def update_rtile_storage_padding(
         self,
         rprog: rProg,
-        arch: Union[Arch, IPU, K80, MI50, V100],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
         mem_level: int,
         smem_tiling: bool,
         reg_tiling: bool,
@@ -77,7 +77,7 @@ class PolicyBase:
     def get_align_info(
         self,
         rprog: rProg,
-        arch: Union[Arch, IPU, K80, MI50, V100],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
         smem_bool=False,
         reg_bool=False,
         target_stage="compute",
@@ -216,7 +216,7 @@ class PolicyBase:
     def get_align_info_fuse(
         self,
         rprog: rProg,
-        arch: Union[Arch, IPU, K80, MI50, V100],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
         smem_bool=False,
         reg_bool=False,
         target_stage="conv2d_nchw_implicit_gemm",
@@ -363,7 +363,7 @@ class PolicyBase:
         self,
         smem_tensor: tvm.te.Tensor,
         reg_tensor: tvm.te.Tensor,
-        arch: Union[Arch, IPU, K80, MI50, V100],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
     ):
         res = []
         assert len(smem_tensor) == len(reg_tensor)
