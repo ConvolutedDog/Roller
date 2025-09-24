@@ -1,0 +1,53 @@
+name: Short Time Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  execute-on-server:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Needed for git operations later
+
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.10"
+
+    - name: Add SSH key and configure known hosts
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        echo "Host server-host
+          HostName ${{ secrets.SERVER_HOST }}
+          User ${{ secrets.SSH_USERNAME }}
+          Port ${{ secrets.SSH_PORT || '22' }}
+          IdentityFile ~/.ssh/id_rsa" > ~/.ssh/config
+        ssh-keyscan -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Copy files to server
+      run: |
+        rsync -avz -e "ssh -p ${{ secrets.SSH_PORT || '22' }}" --delete \
+          --exclude='.git' ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }}:/tmp/Roller/
+
+    - name: Execute script on server
+      run: |
+        ssh -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
+          "cd /tmp/Roller && chmod +x ./tests/short-time.sh && ./tests/short-time.sh"
+
+    - name: Cleanup server
+      run: |
+        ssh -p ${{ secrets.SSH_PORT || '22' }} \
+          ${{ secrets.SSH_USERNAME }}@${{ secrets.SERVER_HOST }} \
+          "rm -rf /tmp/Roller"
