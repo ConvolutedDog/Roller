@@ -482,11 +482,24 @@ def tc_mm_main_template(
     block_y: int,
     block_z: int,
     times: int,
+    gen_check_code: bool = False,
 ) -> str:
     if BACKEND == "antares":
         kernel_name = "template_op_kernel0"
     if BACKEND == "tvm":
         kernel_name = "default_function_kernel0" if not LatestTVM else "main_kernel"
+    s_simple_check = (
+        "\n"
+        + "    half same_res = Ch[0];\n"
+        + "    for (int i = 1; i < output_size; ++i)\n"
+        + "    {{\n"
+        + "        if (Ch[i] != same_res)\n"
+        + "        {{\n"
+        + '            printf("output[%d] = %f\\n", i, Ch[i]);\n'
+        + "            exit(1);\n"
+        + "        }}\n"
+        + "    }}\n"
+    )
     return (
         "#include <cuda_runtime.h>\n"
         "#include <stdio.h>\n"
@@ -545,6 +558,7 @@ def tc_mm_main_template(
         "    }}\n"
         "\n"
         "    cudaMemcpy(Ch, Cd, output_size * sizeof(half), cudaMemcpyDeviceToHost);\n"
+        "{}"
         "\n"
         "    free(Ah);\n"
         "    free(Bh);\n"
@@ -569,6 +583,7 @@ def tc_mm_main_template(
             block_x * block_y * block_z,
             times,
             kernel_name,
+            s_simple_check if gen_check_code else "",
         )
     )
 

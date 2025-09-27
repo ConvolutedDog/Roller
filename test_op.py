@@ -66,6 +66,10 @@ parser.add_argument(
     action="store_true",
     default=False,
 )
+# Generate result checking code for each kernel.
+parser.add_argument(
+    "--gen_check_code", dest="gen_check_code", action="store_true", default=True
+)
 parser.add_argument("--code_dir", type=str, default="./tmp_dir")
 parser.add_argument("--topk", type=int, default=10)
 parser.add_argument("--eval_bar", nargs="*", type=int, default=[1, 5, 10, 20, 50])
@@ -97,6 +101,7 @@ def main_template(
     tensor_dim = op.TensorDim(args.fuse or args.schedule_fuse)
     s_size, s_hmalloc, s_dmalloc, s_feed, s_memcpyh2d = "", "", "", "", ""
     s_hfree, s_dfree, s_memcpyd2h = "", "", ""
+    s_simple_check = ""
     s_htensor = (
         "    float " + ", ".join(["*" + n + "h" for n in all_tensors_name]) + ";\n"
     )
@@ -176,6 +181,25 @@ def main_template(
             + str(byte)
             + ", cudaMemcpyDeviceToHost);\n"
         )
+        s_simple_check += (
+            "    float same_res = "
+            + name
+            + "h[0];\n"
+            + "    for (int i = 1; i < output_size"
+            + str(i)
+            + "; ++i)\n"
+            + "    {\n"
+            "        if ("
+            + name
+            + "h[i] != same_res)\n"
+            + "        {\n"
+            + '            printf("output[%d] = %f\\n", i, '
+            + name
+            + "h[i]);\n"
+            + "            exit(1);\n"
+            + "        }\n"
+            + "    }\n"
+        )
 
     if backend == "antares":
         kernel_name = "template_op_kernel0"
@@ -231,6 +255,8 @@ def main_template(
         "{}"
         "\n"
         "{}"
+        "\n"
+        "{}"
         "}}\n".format(
             op.Dimensions(),
             source,
@@ -247,6 +273,7 @@ def main_template(
             kernel_name,
             s_parameters,
             s_memcpyd2h,
+            s_simple_check if args.gen_check_code else "",
             s_dfree,
             s_hfree,
         )
@@ -490,7 +517,17 @@ if __name__ == "__main__":
             )
             grid_x, grid_y = get_tc_grid_size(M, N, rprog.GetTile(0))
             main_source = tc_mm_main_template(
-                source, M, K, N, grid_x, grid_y, block_x, block_y, block_z, 10
+                source,
+                M,
+                K,
+                N,
+                grid_x,
+                grid_y,
+                block_x,
+                block_y,
+                block_z,
+                10,
+                args.gen_check_code,
             )
 
         with open("{}.cu".format(file_name), "w") as ouf:

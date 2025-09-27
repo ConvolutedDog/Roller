@@ -5,3 +5,7 @@ tmp_dir/
 __pycache__/
 .env
 .vscode
+*.nsys-rep
+*.sqlite
+tvm_tuning/
+tuning_logs/

@@ -246,7 +246,10 @@ class CodeGeneratorR:
         else:
             axes = sch[shared].op.axis
             fused = sch[shared].fuse(*axes)
-            fused, ii_n = sch[shared].split(fused, factor=self.bank_size // 4)
+            if not shared_fetch_vectorize:
+                fused, ii_n = sch[shared].split(fused, factor=self.bank_size // 4)
+            else:
+                fused, ii_n = sch[shared].split(fused, factor=4)
             oo, ii = sch[shared].split(fused, factor=self.thread_per_block)
             # ii, ii_n = sch[shared].split(ii, factor=2)
             sch[shared].vectorize(ii_n)
@@ -442,11 +445,12 @@ class CodeGeneratorR:
                         )
                         smem_tensor.append(shared_tensor)
                 if self.need_reg_tiling:
-                    for shared_tensor in smem_tensor:
-                        local_tensor = self.sche.cache_read(
-                            shared_tensor, "local", [out]
-                        )
-                        reg_tensor.append(local_tensor)
+                    if codegen_input_reg_tiling:
+                        for shared_tensor in smem_tensor:
+                            local_tensor = self.sche.cache_read(
+                                shared_tensor, "local", [out]
+                            )
+                            reg_tensor.append(local_tensor)
                     reg_tile = self.sche.cache_write(out, "local")
 
                 if DEBUG:
