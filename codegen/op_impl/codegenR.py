@@ -192,7 +192,9 @@ class CodeGeneratorR:
                 num = num * self.tiling[axis.var.name][1 if vthread else 0]
         self.thread_per_block = num
 
-    def cooperative_fetch(self, shared, sch, old_axis=None, all_tensors=None):
+    def cooperative_fetch(
+        self, shared, sch, old_axis=None, shared_fetch_vectorize=False
+    ):
         if LatestTVM:
             new_looprvs = [
                 self.sche.get_loops(shared)[i]
@@ -209,8 +211,13 @@ class CodeGeneratorR:
                 sch.show()
 
             if not isinstance(sch.get(fused).extent, int):
-                new_factors = [None, self.bank_size // 4]
+                assert self.bank_size % 4 == 0 and self.bank_size >= 4
+                if not shared_fetch_vectorize:
+                    new_factors = [None, self.bank_size // 4]
+                else:
+                    new_factors = [None, 4]
             else:
+                raise NotImplementedError("Not implemented.")
                 new_factors = [
                     math.ceil(int(sch.get(fused).extent) / int(self.bank_size // 4)),
                 ] + [
@@ -288,7 +295,7 @@ class CodeGeneratorR:
 
     def adjust_format(self, out):
         if LatestTVM:
-            saxis, _ = get_axis_names(out)
+            saxis, raxis = get_axis_names(out)
             for name in saxis:
                 if len(self.tiling[name]) == 2:
                     vthrd = self.tiling[name][1]
@@ -322,6 +329,8 @@ class CodeGeneratorR:
         bank_size=4,
         in_tensors=None,
         out_tensors=None,
+        shared_fetch_vectorize=False,
+        codegen_input_reg_tiling=False,
     ):
         self.bank_size = bank_size
         self.binding = {
@@ -412,13 +421,14 @@ class CodeGeneratorR:
                         self.sche.show()
                 if self.need_reg_tiling:
                     read_buffer_index = 0
-                    for input_tensor in input_tensors:
-                        block_compute = self.sche.get_block(target_stage)
-                        local_tensor = self.sche.cache_read(
-                            block_compute, read_buffer_index, "local"
-                        )
-                        read_buffer_index += 1
-                        reg_tensor.append(local_tensor)
+                    if codegen_input_reg_tiling:
+                        for input_tensor in input_tensors:
+                            block_compute = self.sche.get_block(target_stage)
+                            local_tensor = self.sche.cache_read(
+                                block_compute, read_buffer_index, "local"
+                            )
+                            read_buffer_index += 1
+                            reg_tensor.append(local_tensor)
                     reg_tile = self.sche.cache_write(
                         block_compute, write_buffer_index=0, storage_scope="local"
                     )
@@ -512,6 +522,9 @@ class CodeGeneratorR:
 
                     loop_var = str(self.sche.get(looprv).loop_var)
                     if self.bank_size != 4:
+                        raise NotImplementedError(
+                            "Only support bank size 4 for LatestTVM"
+                        )
                         assert len(self.tiling[loop_var]) == 3
                         if self.tiling[loop_var][-3] >= (self.bank_size // 4):
                             self.tiling[loop_var][-3] = self.tiling[loop_var][-3] // (
@@ -908,7 +921,12 @@ class CodeGeneratorR:
                         self.sche.compute_at(st, new_reduce_axis[0])
                         if DEBUG:
                             self.sche.show()
-                        self.cooperative_fetch(st, self.sche, old_axis, None)
+                        self.cooperative_fetch(
+                            st,
+                            self.sche,
+                            old_axis,
+                            shared_fetch_vectorize=shared_fetch_vectorize,
+                        )
                     if DEBUG:
                         self.sche.show()
                 else:
@@ -917,7 +935,10 @@ class CodeGeneratorR:
                     for st in smem_tensor:
                         self.sche[st].compute_at(self.sche[reg_tile], reduce_axis[0])
                         self.cooperative_fetch(
-                            st, self.sche, None, in_tensors + out_tensors
+                            st,
+                            self.sche,
+                            None,
+                            shared_fetch_vectorize=shared_fetch_vectorize,
                         )
             else:
                 if LatestTVM:
@@ -933,7 +954,12 @@ class CodeGeneratorR:
                         self.sche.compute_at(st, new_reduce_axis[0])
                         if DEBUG:
                             self.sche.show()
-                        self.cooperative_fetch(st, self.sche, old_axis, None)
+                        self.cooperative_fetch(
+                            st,
+                            self.sche,
+                            old_axis,
+                            shared_fetch_vectorize=shared_fetch_vectorize,
+                        )
                     if DEBUG:
                         self.sche.show()
                 else:
@@ -941,7 +967,12 @@ class CodeGeneratorR:
                         self.sche[rt].compute_at(self.sche[out], reduce_axis[-1])
                     for st in smem_tensor:
                         self.sche[st].compute_at(self.sche[out], reduce_axis[0])
-                        self.cooperative_fetch(st, self.sche)
+                        self.cooperative_fetch(
+                            st,
+                            self.sche,
+                            None,
+                            shared_fetch_vectorize=shared_fetch_vectorize,
+                        )
 
             if DEBUG:
                 if not LatestTVM:

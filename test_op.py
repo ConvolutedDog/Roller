@@ -23,8 +23,8 @@ parser.add_argument("--shape", nargs="*", type=int, default=[4096, 4096, 4096])
 #    "--shape", nargs="*", type=int, default=[128, 128, 28, 28, 128, 3, 3]
 # )
 parser.add_argument("--rtile2_shape", nargs="*", type=int, default=[1, 1, 1])
-parser.add_argument("--rtile1_shape", nargs="*", type=int, default=[8, 8, 1])
-parser.add_argument("--rtile0_shape", nargs="*", type=int, default=[128, 64, 8])
+parser.add_argument("--rtile1_shape", nargs="*", type=int, default=[16, 8, 1])
+parser.add_argument("--rtile0_shape", nargs="*", type=int, default=[64, 256, 16])
 parser.add_argument("--arch", type=str, default="V100")
 parser.add_argument("--backend", type=str, default="tvm")
 parser.add_argument(
@@ -32,6 +32,21 @@ parser.add_argument(
 )
 parser.add_argument(
     "--reg_tiling", dest="reg_tiling", action="store_true", default=True
+)
+# When generating CUDA code, if the input tensor should be fetched to local memory.
+parser.add_argument(
+    "--codegen_input_reg_tiling",
+    dest="codegen_input_reg_tiling",
+    action="store_true",
+    default=False,
+)
+# When fetching shared memory, vectorize the shared memory load code (use float4)
+# to improve performance.
+parser.add_argument(
+    "--shared_fetch_vectorize",
+    dest="shared_fetch_vectorize",
+    action="store_true",
+    default=True,
 )
 # This st_align argument has not been used in the experiments of the original paper.
 # Therefore, the related code has not been adapted for newer versions of TVM.
@@ -358,6 +373,8 @@ def get_tvm_source(
             bank_size=arch.smem_bank_size,
             in_tensors=in_tensors,
             out_tensors=out_tensors,
+            shared_fetch_vectorize=args.shared_fetch_vectorize,
+            codegen_input_reg_tiling=args.codegen_input_reg_tiling,
         )
         if LatestTVM:
             print(s.mod)
