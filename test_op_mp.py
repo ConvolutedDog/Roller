@@ -67,7 +67,7 @@ parser.add_argument(
 )
 # Generate result checking code for each kernel.
 parser.add_argument(
-    "--gen_check_code", dest="gen_check_code", action="store_true", default=True
+    "--gen_check_code", dest="gen_check_code", action="store_true", default=False
 )
 parser.add_argument("--code_dir", type=str, default="./tmp_dir")
 parser.add_argument("--topk", type=int, default=10)
@@ -81,6 +81,12 @@ parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
 # If you have several GPUs with the same architecture, you can change
 # the num_threads to run them in parallel.
 parser.add_argument("--num_threads", type=int, default=1)
+parser.add_argument(
+    "--verbose_cuda_code", dest="verbose_cuda_code", action="store_true", default=False
+)
+parser.add_argument(
+    "--verbose_irmodule", dest="verbose_irmodule", action="store_true", default=False
+)
 
 args = parser.parse_args()
 top1_time = 0
@@ -319,7 +325,6 @@ def get_tvm_source(
     out_tensor = out_tensors[0]
     if args.fuse or args.schedule_fuse:
         pad = get_pad(rprog, out_tensor)
-        print("pad: ", pad)
         expr_out = expr(shape, dtype, False, pad)
         in_tensors, out_tensors = expr_out[0], expr_out[1]
         ori_in = []
@@ -406,8 +411,6 @@ def get_tvm_source(
             codegen_input_reg_tiling=args.codegen_input_reg_tiling,
         )
         if LatestTVM:
-            print(s.mod)
-
             target = tvm.target.Target("cuda")
             mod = tvm.build(s.mod, target=target)
 
@@ -435,6 +438,7 @@ def compile_and_run_kernel(
     device_id,
     idx,
 ):
+    print(f"rProg[{idx}]: {rprog.Dump()}")
     block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
     grid_size = rprog.GetParallelism(0)
     blocks = (block_size, 1, 1)
@@ -488,9 +492,10 @@ def compile_and_run_kernel(
     with open("{}.cu".format(file_name), "w") as ouf:
         ouf.write(main_source)
 
-        print("v" * 40)
-        print(main_source)
-        print("^" * 40)
+        if args.verbose_cuda_code:
+            print("v" * 40)
+            print(main_source)
+            print("^" * 40)
 
     os.system(
         "nvcc {}.cu -lcuda -gencode=arch=compute_{},code=compute_{} -o {}".format(
@@ -512,7 +517,6 @@ def compile_and_run_kernel(
     os.system("rm {}".format(file_name))
     os.system("rm {}.cu".format(file_name))
 
-    print("LOG_NAME: {}".format(log_name))
     with open(log_name, "r") as f:
         for line in f.readlines():
             print(line, end="")
@@ -613,7 +617,7 @@ if __name__ == "__main__":
     else:
         rprogs = policy.emit_config_without_trails(args.topk)
 
-    print("evaluating top {} configs".format(len(rprogs)))
+    print("Evaluating top {} configs".format(len(rprogs)))
 
     rprog_idx = alloc_configs_for_subprocess(args.num_threads, len(rprogs))
     threads = []
@@ -646,12 +650,12 @@ if __name__ == "__main__":
 
     eval_time = time.time() - start_time
 
-    print("top1 time: {} ms".format(top1_time))
-    print("top10 time: {} ms".format(best_time))
-    print("best idx: {}".format(best_idx))
-    print("best config: {}".format(rprogs[best_idx].Dump()))
-    print("top1 compile time: {} s".format(emit_time))
-    print("top10 compile time: {} s".format(eval_time))
+    print("Top1 time: {} ms".format(top1_time))
+    print("Top10 time: {} ms".format(best_time))
+    print("Best idx: {}".format(best_idx))
+    print("Best config: {}".format(rprogs[best_idx].Dump()))
+    print("Top1 compile time: {} s".format(emit_time))
+    print("Top10 compile time: {} s".format(eval_time))
 
     cu_file_name = "roller_{}_{}.cu".format(
         args.op, "_".join([str(d) for d in args.shape])

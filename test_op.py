@@ -67,7 +67,7 @@ parser.add_argument(
 )
 # Generate result checking code for each kernel.
 parser.add_argument(
-    "--gen_check_code", dest="gen_check_code", action="store_true", default=True
+    "--gen_check_code", dest="gen_check_code", action="store_true", default=False
 )
 parser.add_argument("--code_dir", type=str, default="./tmp_dir")
 parser.add_argument("--topk", type=int, default=10)
@@ -78,7 +78,12 @@ parser.add_argument("--use_tc", dest="use_tc", action="store_true", default=Fals
 parser.add_argument("--data_type", type=str, default="float32")
 parser.add_argument("--padding_threshold_cap", type=float, default=1.0)
 parser.add_argument("--keep_tiny", dest="keep_tiny", action="store_true")
-
+parser.add_argument(
+    "--verbose_cuda_code", dest="verbose_cuda_code", action="store_true", default=False
+)
+parser.add_argument(
+    "--verbose_irmodule", dest="verbose_irmodule", action="store_true", default=False
+)
 
 args = parser.parse_args()
 
@@ -316,7 +321,6 @@ def get_tvm_source(
     out_tensor = out_tensors[0]
     if args.fuse or args.schedule_fuse:
         pad = get_pad(rprog, out_tensor)
-        print("pad: ", pad)
         expr_out = expr(shape, dtype, False, pad)
         in_tensors, out_tensors = expr_out[0], expr_out[1]
         ori_in = []
@@ -403,15 +407,19 @@ def get_tvm_source(
             codegen_input_reg_tiling=args.codegen_input_reg_tiling,
         )
         if LatestTVM:
-            print(s.mod)
-
             target = tvm.target.Target("cuda")
-            mod = tvm.build(s.mod, target=target)
 
+            if args.verbose_irmodule:
+                print(s.mod)
+
+            mod = tvm.build(s.mod, target=target)
             return mod.imported_modules[0].get_source()
         else:
             s.normalize()
             mod = tvm.lower(s, in_tensors + out_tensors, simple_mode=False)
+
+            if args.verbose_irmodule:
+                print(mod.script())
 
             func = tvm.build(s, in_tensors + out_tensors, "cuda")
             return func.imported_modules[0].get_source()
@@ -470,7 +478,7 @@ if __name__ == "__main__":
     else:
         rprogs = policy.emit_config_without_trails(args.topk)
 
-    print("evaluating top {} configs".format(len(rprogs)))
+    print("Evaluating top {} configs".format(len(rprogs)))
     best_idx = -1
     best_time = 1e100
     idx = 0
@@ -480,8 +488,7 @@ if __name__ == "__main__":
     bar_id = 0
     dtype = "float16" if args.use_tc else "float32"
     for rprog in rprogs:
-        print("id: {}".format(idx))
-        print(rprog.Dump())
+        print(f"rProg[{idx}]: {rprog.Dump()}")
         block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
         grid_size = rprog.GetParallelism(0)
         blocks = (block_size, 1, 1)
@@ -532,9 +539,10 @@ if __name__ == "__main__":
         with open("{}.cu".format(file_name), "w") as ouf:
             ouf.write(main_source)
 
-            print("v" * 40)
-            print(main_source)
-            print("^" * 40)
+            if args.verbose_cuda_code:
+                print("v" * 40)
+                print(main_source)
+                print("^" * 40)
 
         os.system(
             "nvcc {}.cu -lcuda -gencode=arch=compute_{},code=compute_{} -o {}".format(
@@ -556,13 +564,13 @@ if __name__ == "__main__":
         os.system("rm {}".format(file_name))
         os.system("rm {}.cu".format(file_name))
 
-        print("LOG_NAME: {}".format(log_name))
         with open(log_name, "r") as f:
             for line in f.readlines():
                 print(line, end="")
 
         exec_time = get_time_from_nvprof_file(log_name)
         os.system("rm {}".format(log_name))
+
         if exec_time < best_time:
             best_idx = idx
             best_rprog = rprog
@@ -573,7 +581,6 @@ if __name__ == "__main__":
             best_grid_size = grid_size
 
         idx += 1
-        print(idx, bar_id)
         if idx == eval_bar[bar_id]:
             cur_time = time.time()
             eval_results = {}
@@ -585,11 +592,11 @@ if __name__ == "__main__":
             bar_id += 1
 
     for topx, eval_results in zip(eval_bar, evals):
-        print("Eval top {} configs ======================".format(topx))
-        print("compilation time: {}s".format(eval_results["compilation time"]))
-        print("best time: {}ms".format(eval_results["best time"]))
-        print("best config: {}".format(eval_results["best config"]))
-        print("best idx: {}".format(eval_results["best idx"]))
+        print("Eval top {} configs".format(topx))
+        print("Compilation time: {}s".format(eval_results["compilation time"]))
+        print("Best time: {}ms".format(eval_results["best time"]))
+        print("Best config: {}".format(eval_results["best config"]))
+        print("Best idx: {}".format(eval_results["best idx"]))
 
     cu_file_name = "roller_{}_{}.cu".format(
         args.op, "_".join([str(d) for d in args.shape])
