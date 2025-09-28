@@ -16,17 +16,6 @@ from .tc_intrin import (
 )
 from utils import LatestTVM, get_axis_names, get_blocks
 
-"""
-from tvm.topi.cuda.tensor_intrin import (
-    intrin_wmma_load_matrix_A,
-    intrin_wmma_load_matrix_W,
-    intrin_wmma_store_matrix,
-    intrin_wmma_gemm,
-)
-"""
-
-DEBUG = False
-
 
 class CodeGeneratorR:
     def get_codegen_dict(self, rprog):
@@ -57,14 +46,6 @@ class CodeGeneratorR:
     ):
         if sche == None:
             sche = self.sche
-
-        if DEBUG:
-            print("self.tiling: ", self.tiling)
-            if hasattr(self, "iter_vars_map"):
-                print("self.iter_vars_map: ", self.iter_vars_map)
-            if hasattr(self, "iter_vars_map_reverse"):
-                print("self.iter_vars_map_reverse: ", self.iter_vars_map_reverse)
-            print(axis, type(axis))
 
         factors = None
 
@@ -106,10 +87,6 @@ class CodeGeneratorR:
                     )
                 ]
 
-                if DEBUG:
-                    print("iter_vars_compute_local:", iter_vars_compute_local)
-                    print("iter_vars_compute:", iter_vars_compute)
-
                 self.iter_vars_map = {}
                 self.iter_vars_map_reverse = {}
                 for i in range(len(iter_vars_compute_local)):
@@ -141,10 +118,6 @@ class CodeGeneratorR:
             block_compute_local = self.sche.get_block(target_stage)
             loops = self.sche.get_loops(block_compute_local)
 
-            if DEBUG:
-                print("iter_vars_map: ", self.iter_vars_map)
-                print("iter_vars_map_reverse: ", self.iter_vars_map_reverse)
-
             target_loop = axis
             if target_loop is None:
                 raise ValueError(f"Unfound axis")
@@ -154,8 +127,6 @@ class CodeGeneratorR:
                     math.ceil(int(axis.dom.extent) / int(np.prod(factors))),
                 ] + factors[:]
             else:
-                if DEBUG:
-                    print(self.sche.get(target_loop).extent)
                 new_factors = [
                     math.ceil(
                         int(self.sche.get(target_loop).extent) / int(np.prod(factors))
@@ -164,8 +135,6 @@ class CodeGeneratorR:
 
             axises = sche.split(target_loop, factors=new_factors)
 
-            if DEBUG:
-                self.sche.show()
             return axises
 
         else:
@@ -179,8 +148,6 @@ class CodeGeneratorR:
 
     def update_thread_per_block(self, stage, sche=None, vthread=True):
         num = 1
-        if DEBUG:
-            print(self.tiling)
         if LatestTVM:
             saxis, _ = get_axis_names(stage)  # stage is out
             for name in saxis:
@@ -207,8 +174,6 @@ class CodeGeneratorR:
                     fused_loops.append(looprv)
 
             fused = sch.fuse(*fused_loops)
-            if DEBUG:
-                sch.show()
 
             if not isinstance(sch.get(fused).extent, int):
                 assert self.bank_size % 4 == 0 and self.bank_size >= 4
@@ -224,8 +189,6 @@ class CodeGeneratorR:
                     self.bank_size // 4
                 ]  # right?
 
-            if DEBUG:
-                print(new_factors)
             fused, ii_n = sch.split(fused, factors=new_factors)
 
             if not isinstance(sch.get(fused).extent, int):
@@ -294,7 +257,6 @@ class CodeGeneratorR:
             thrd_dict["threadIdx.y"],
             thrd_dict["threadIdx.z"],
         ]
-        # print("blck_grid: ", self.blck_grid, "thrd_grid: ", self.thrd_grid)
 
     def adjust_format(self, out):
         if LatestTVM:
@@ -311,7 +273,6 @@ class CodeGeneratorR:
                     vthrd = self.tiling[name][1]
                     thrd = self.tiling[name][0]
                     self.tiling[name] = [vthrd, thrd, 1]
-        # print("Config:", self.tiling)
 
     # [Parameters]
     #   schedule: the original TVM schedule of an op
@@ -409,8 +370,6 @@ class CodeGeneratorR:
             reg_tile = None
 
             if LatestTVM:
-                if DEBUG:
-                    self.sche.mod.show()
                 if self.need_smem_tiling:
                     read_buffer_index = 0
                     for input_tensor in input_tensors:
@@ -420,8 +379,6 @@ class CodeGeneratorR:
                         )
                         read_buffer_index += 1
                         smem_tensor.append(shared_tensor)
-                    if DEBUG:
-                        self.sche.show()
                 if self.need_reg_tiling:
                     read_buffer_index = 0
                     if codegen_input_reg_tiling:
@@ -435,8 +392,6 @@ class CodeGeneratorR:
                     reg_tile = self.sche.cache_write(
                         block_compute, write_buffer_index=0, storage_scope="local"
                     )
-                    if DEBUG:
-                        self.sche.show()
             else:
                 if self.need_smem_tiling:
                     for input_tensor in input_tensors:
@@ -452,12 +407,6 @@ class CodeGeneratorR:
                             )
                             reg_tensor.append(local_tensor)
                     reg_tile = self.sche.cache_write(out, "local")
-
-                if DEBUG:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
 
             blck_axis = []
             vthd_axis = []
@@ -478,13 +427,13 @@ class CodeGeneratorR:
                                 -1
                             ] * (self.bank_size // 4)
                         else:
-                            print("shared mem tiling is too small.")
+                            print("Shared mem tiling is too small.")
                             self.tiling[axis.var.name][-1] = (
                                 self.tiling[axis.var.name][-1]
                                 * self.tiling[axis.var.name][-3]
                             )
                             self.tiling[axis.var.name][-3] = 1
-                        print("updated self.tiling: ", self.tiling)
+                        print("Updated self.tiling: ", self.tiling)
 
                     bx, vx, tx, tn = self.split_axis(
                         out,
@@ -493,13 +442,6 @@ class CodeGeneratorR:
                         target_stage=target_stage + ("_local" if reg_bool else ""),
                         all_tensors=in_tensors + out_tensors,
                     )
-
-                    if DEBUG:
-                        if not LatestTVM:
-                            mod = tvm.lower(
-                                self.sche, in_tensors + out_tensors, simple_mode=False
-                            )
-                            print(mod.script())
 
                     blck_axis.append(bx)
                     vthd_axis.append(vx)
@@ -510,8 +452,6 @@ class CodeGeneratorR:
                     target_stage + ("_local" if reg_bool else "")
                 )
                 looprvs = self.sche.get_loops(block_compute)
-
-                print([self.sche.get(looprvs[i]).loop_var for i in range(len(looprvs))])
 
                 iter_vars = self.sche.get(block_compute).iter_vars
                 iter_types = [iter_var.iter_type for iter_var in iter_vars]
@@ -538,12 +478,12 @@ class CodeGeneratorR:
                                 self.bank_size // 4
                             )
                         else:
-                            print("shared mem tiling is too small.")
+                            print("Shared mem tiling is too small.")
                             self.tiling[loop_var][-1] = (
                                 self.tiling[loop_var][-1] * self.tiling[loop_var][-3]
                             )
                             self.tiling[loop_var][-3] = 1
-                        print("updated self.tiling: ", self.tiling)
+                        print("Updated self.tiling: ", self.tiling)
 
                     bx, vx, tx, tn = self.split_axis(
                         None,
@@ -565,30 +505,12 @@ class CodeGeneratorR:
             else:
                 self.sche[out].reorder(*axis_order)
 
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
-
             if LatestTVM:
                 blck_fused = self.sche.fuse(*blck_axis)
                 thrd_fused = self.sche.fuse(*thrd_axis)
             else:
                 blck_fused = self.sche[out].fuse(*blck_axis)
                 thrd_fused = self.sche[out].fuse(*thrd_axis)
-
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
 
             if self.binding["space"][0] is not None:
                 if LatestTVM:
@@ -597,15 +519,6 @@ class CodeGeneratorR:
                     self.sche[out].bind(
                         blck_fused, te.thread_axis(self.binding["space"][0])
                     )
-
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
 
             if self.binding["space"][1] is not None:
                 if LatestTVM:
@@ -619,15 +532,6 @@ class CodeGeneratorR:
                             va, te.thread_axis(self.binding["space"][1])
                         )
 
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
-
             if self.binding["space"][2] is not None:
                 if LatestTVM:
                     self.sche.bind(thrd_fused, self.binding["space"][2])
@@ -636,26 +540,13 @@ class CodeGeneratorR:
                         thrd_fused, te.thread_axis(self.binding["space"][2])
                     )
 
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
-
             reduce_axis = []
             if reg_tile is not None:
                 if LatestTVM:
                     self.sche.compute_at(target_stage, thrd_fused)
-                    if DEBUG:
-                        self.sche.show()
 
                     space_axis = []
                     block_compute = self.sche.get_block(target_stage)
-                    if DEBUG:
-                        print(self.sche.get(block_compute).iter_vars)
 
                     loops = self.sche.get_loops(block_compute)
 
@@ -702,12 +593,6 @@ class CodeGeneratorR:
                     target_stage += "_update"
 
                     for i in range(len(loops)):
-                        if DEBUG:
-                            print(
-                                "loops: ",
-                                self.sche.get(loops[i]).loop_var,
-                                self.sche.get(loops[i]).kind,
-                            )
                         if tvm.tir.ForKind.SERIAL == self.sche.get(loops[i]).kind:
                             reduce_axis.append(loops[i])
                         else:
@@ -718,10 +603,6 @@ class CodeGeneratorR:
                                 tvm.tir.ForKind.THREAD_BINDING,
                             ]
                             space_axis.append(loops[i])
-
-                    if DEBUG:
-                        print("space_axis: ", space_axis)
-                        print("reduce_axis: ", reduce_axis)
 
                     new_reduce_axis = []
 
@@ -738,21 +619,12 @@ class CodeGeneratorR:
                         )
                         reduce_axis = reduce_axis + res
                         new_reduce_axis = new_reduce_axis + res
-                        if DEBUG:
-                            self.sche.show()
 
                     axis_order = new_reduce_axis + space_axis
 
-                    if DEBUG:
-                        print("-" * 100)
-                        for axis in axis_order:
-                            print(axis, end=" ")
-                            print(self.sche.get(axis).loop_var)
-                        print("-" * 100)
-
-                    # self.sche.reorder(*axis_order) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
-                    # space_fused = self.sche.fuse(*space_axis) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
-                    # self.sche.unroll(space_fused) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
+                    # self.sche.reorder(*axis_order) # TODO: ERROR
+                    # space_fused = self.sche.fuse(*space_axis) # TODO: ERROR
+                    # self.sche.unroll(space_fused) # TODO: ERROR
                 else:
                     self.sche[reg_tile].compute_at(self.sche[out], thrd_fused)
                     space_axis = []
@@ -762,23 +634,15 @@ class CodeGeneratorR:
                         res = self.split_axis(reg_tile, axis)
                         reduce_axis = reduce_axis + res
                     axis_order = reduce_axis + space_axis
-                    # print('axis_order', axis_order)
-                    # print("[Split reduction axis]\n", axis_order)
                     self.sche[reg_tile].reorder(*axis_order)
                     space_fused = self.sche[reg_tile].fuse(*space_axis)
                     self.sche[reg_tile].unroll(space_fused)
             else:
                 if LatestTVM:
-                    if DEBUG:
-                        self.sche.show()
-
                     space_axis = []
                     block_compute = self.sche.get_block(target_stage)
-                    if DEBUG:
-                        print(self.sche.get(block_compute).iter_vars)
 
                     loops = self.sche.get_loops(block_compute)
-                    print([self.sche.get(loops[i]).loop_var for i in range(len(loops))])
 
                     # Purpose: Optimize reduction operations by hoisting initialization
                     #          out of hot loops
@@ -821,8 +685,6 @@ class CodeGeneratorR:
                         self.sche.decompose_reduction(block_compute, loops[3])
                     )
                     target_stage += "_update"
-                    if DEBUG:
-                        self.sche.show()
 
                     block_compute = self.sche.get_block(target_stage)
                     iter_vars = self.sche.get(block_compute).iter_vars
@@ -838,12 +700,6 @@ class CodeGeneratorR:
                             else:
                                 space_axis.append(loops[i])
                         else:
-                            if DEBUG:
-                                print(
-                                    "loops: ",
-                                    self.sche.get(loops[i]).loop_var,
-                                    self.sche.get(loops[i]).kind,
-                                )
                             if tvm.tir.ForKind.SERIAL == self.sche.get(loops[i]).kind:
                                 reduce_axis.append(loops[i])
                             else:
@@ -855,21 +711,6 @@ class CodeGeneratorR:
                                 ]
                                 space_axis.append(loops[i])
 
-                    if DEBUG:
-                        print(
-                            "space_axis: ",
-                            [
-                                self.sche.get(space_axis[i]).loop_var
-                                for i in range(len(space_axis))
-                            ],
-                        )
-                        print(
-                            "reduce_axis: ",
-                            [
-                                self.sche.get(reduce_axis[i]).loop_var
-                                for i in range(len(reduce_axis))
-                            ],
-                        )
                     new_reduce_axis = []
 
                     for axis in reduce_axis.copy():
@@ -884,15 +725,13 @@ class CodeGeneratorR:
                         )
                         reduce_axis = reduce_axis + res
                         new_reduce_axis = new_reduce_axis + res
-                        if DEBUG:
-                            self.sche.show()
 
                     # axis_order = reduce_axis + space_axis
                     axis_order = new_reduce_axis + space_axis
 
-                    # self.sche.reorder(*axis_order) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
-                    # space_fused = self.sche.fuse(*space_axis) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
-                    # self.sche.unroll(space_fused) # ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR
+                    # self.sche.reorder(*axis_order) # TODO: ERROR
+                    # space_fused = self.sche.fuse(*space_axis) # TODO: ERROR
+                    # self.sche.unroll(space_fused) # TODO: ERROR
                 else:
                     for axis in self.sche[out].op.reduce_axis:
                         res = self.split_axis(out, axis)
@@ -902,37 +741,22 @@ class CodeGeneratorR:
                         self.sche[out].bind(reduce_axis[1], bind_idx)
                         self.sche[out].set_store_predicate(bind_idx.var.equal(0))
 
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
-
             if reg_tile is not None:
                 if LatestTVM:
                     for rt in reg_tensor:
                         self.sche.compute_at(rt, new_reduce_axis[-1])
                     for st in smem_tensor:
-                        if DEBUG:
-                            print(dir(st))
                         old_axis = [
                             str(self.sche.get(self.sche.get_loops(st)[i]).loop_var)
                             for i in range(len(self.sche.get_loops(st)))
                         ]
                         self.sche.compute_at(st, new_reduce_axis[0])
-                        if DEBUG:
-                            self.sche.show()
                         self.cooperative_fetch(
                             st,
                             self.sche,
                             old_axis,
                             shared_fetch_vectorize=shared_fetch_vectorize,
                         )
-                    if DEBUG:
-                        self.sche.show()
                 else:
                     for rt in reg_tensor:
                         self.sche[rt].compute_at(self.sche[reg_tile], reduce_axis[-1])
@@ -949,23 +773,17 @@ class CodeGeneratorR:
                     for rt in reg_tensor:
                         self.sche.compute_at(rt, new_reduce_axis[-1])
                     for st in smem_tensor:
-                        if DEBUG:
-                            print(dir(st))
                         old_axis = [
                             str(self.sche.get(self.sche.get_loops(st)[i]).loop_var)
                             for i in range(len(self.sche.get_loops(st)))
                         ]
                         self.sche.compute_at(st, new_reduce_axis[0])
-                        if DEBUG:
-                            self.sche.show()
                         self.cooperative_fetch(
                             st,
                             self.sche,
                             old_axis,
                             shared_fetch_vectorize=shared_fetch_vectorize,
                         )
-                    if DEBUG:
-                        self.sche.show()
                 else:
                     for rt in reg_tensor:
                         self.sche[rt].compute_at(self.sche[out], reduce_axis[-1])
@@ -977,15 +795,6 @@ class CodeGeneratorR:
                             None,
                             shared_fetch_vectorize=shared_fetch_vectorize,
                         )
-
-            if DEBUG:
-                if not LatestTVM:
-                    mod = tvm.lower(
-                        self.sche, in_tensors + out_tensors, simple_mode=False
-                    )
-                    print(mod.script())
-                else:
-                    self.sche.show()
 
         if LatestTVM:
             for block_name in old_blocks:
@@ -1052,8 +861,6 @@ class CodeGeneratorR:
         # align_info = self.get_align_info_fuse(schedule, rprog, smem_bool, reg_bool, target_stage, st_align, bank_size, bank_number)
 
         for out in output_tensors:
-            # print('reduce:', self.sche[out].op.reduce_axis)
-            # print('space:', self.sche[out].op.axis)
             self.adjust_format(out)
             # TVM only allows binding reduce axis if it's the only one
             if self.binding["reduce"][1] is not None:
@@ -1064,12 +871,11 @@ class CodeGeneratorR:
             reduce_iters = out.op.reduce_axis
             space_iters = list(set(all_iters) - set(reduce_iters))
             self.calc_grid(reduce_iters, space_iters)
-            # print("Target: {}\nSpace Iters: {}\nReduce Iters: {}\n".format(out, space_iters, reduce_iters))
 
             smem_tensor = []
             reg_tensor = []
             reg_tile = self.sche.cache_write(out, "local")
-            # print("[Add cache stage]")
+
             if self.need_smem_tiling:
                 for input_tensor in input_tensors:
                     self.sche[input_tensor].compute_inline()
@@ -1101,13 +907,13 @@ class CodeGeneratorR:
                             -1
                         ] * (self.bank_size // 4)
                     else:
-                        print("shared mem tiling is too small.")
+                        print("Shared mem tiling is too small.")
                         self.tiling[axis.var.name][-1] = (
                             self.tiling[axis.var.name][-1]
                             * self.tiling[axis.var.name][-3]
                         )
                         self.tiling[axis.var.name][-3] = 1
-                    print("updated self.tiling: ", self.tiling)
+                    print("Updated self.tiling: ", self.tiling)
                 bx, vx, tx, tn = self.split_axis(out, axis)
                 # bx, tx, tn = self.split_axis(out, axis)
                 blck_axis.append(bx)
@@ -1115,7 +921,7 @@ class CodeGeneratorR:
                 thrd_axis.append(tx)
                 tile_axis.append(tn)
             axis_order = blck_axis + vthd_axis + thrd_axis + tile_axis
-            # print("[Split spatial axis]\n", axis_order)
+
             self.sche[out].reorder(*axis_order)
             blck_fused = self.sche[out].fuse(*blck_axis)
             thrd_fused = self.sche[out].fuse(*thrd_axis)
@@ -1153,7 +959,6 @@ class CodeGeneratorR:
                     self.sche[out].bind(reduce_axis[1], bind_idx)
                     self.sche[out].set_store_predicate(bind_idx.var.equal(0))
 
-            # print("[Cooperative fetching]")
             if reg_tile is not None:
                 for rt in reg_tensor:
                     self.sche[rt].compute_at(self.sche[reg_tile], reduce_axis[-1])

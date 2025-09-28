@@ -36,11 +36,11 @@ class Op:
         self.saxis, self.raxis = get_axis_names(self.output_tensors[0])
 
         if LatestTVM:
-            if len(self.unpad_outs) > 0:
-                import warnings
-                warnings.warn(
-                    "The unpad_outs length > 0, please check here."
-                )
+            # if len(self.unpad_outs) > 0:
+            #     import warnings
+            #     warnings.warn(
+            #         "The unpad_outs length > 0, please check here."
+            #     )
             fadd_pf = te.create_prim_func(self.input_tensors + self.output_tensors)
             mod = tvm.IRModule({"main": fadd_pf})
             # Create a TIR schedule
