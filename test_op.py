@@ -488,7 +488,7 @@ if __name__ == "__main__":
     bar_id = 0
     dtype = "float16" if args.use_tc else "float32"
     for rprog in rprogs:
-        print(f"rProg[{idx}]: {rprog.Dump()}")
+        print("rProg: ", rprog.Dump())
         block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
         grid_size = rprog.GetParallelism(0)
         blocks = (block_size, 1, 1)
