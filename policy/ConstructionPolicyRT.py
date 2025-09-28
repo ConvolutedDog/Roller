@@ -31,7 +31,7 @@ def num_tiles(large_tile, base_tile):
 
 def eligible(
     op: Op,
-    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090, H100],
     rprog: rProg,
     mem_level,
     tile_tensor="output",
@@ -149,7 +149,7 @@ class ConstructionPolicyRT(PolicyBase):
     def __init__(
         self,
         op: Op,
-        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
+        arch: Union[Arch, IPU, K80, MI50, V100, RTX4090, H100],
         smem_tiling=False,
         reg_tiling=False,
         st_align=False,
@@ -493,7 +493,7 @@ class ConstructionPolicyRT(PolicyBase):
 
         return self.top_results
 
-    def try_shrink(self, rprog):
+    def try_shrink(self, rprog: rProg):
         sdim = len(rprog.saxis)
         while True:
             smem_tile_dim = rprog.GetTile(0).Dimensions()

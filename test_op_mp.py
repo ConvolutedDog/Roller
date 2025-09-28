@@ -25,7 +25,6 @@ parser.add_argument("--shape", nargs="*", type=int, default=[5120, 5120, 5120])
 parser.add_argument("--rtile2_shape", nargs="*", type=int, default=[1, 1, 1])
 parser.add_argument("--rtile1_shape", nargs="*", type=int, default=[16, 8, 1])
 parser.add_argument("--rtile0_shape", nargs="*", type=int, default=[64, 256, 16])
-parser.add_argument("--arch", type=str, default="V100")
 parser.add_argument("--backend", type=str, default="tvm")
 parser.add_argument(
     "--smem_tiling", dest="smem_tiling", action="store_true", default=True
@@ -301,7 +300,7 @@ def get_pad(rprog: rProg, out_tensor: tvm.te.Tensor):
 
 def get_tvm_source(
     rprog: rProg,
-    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090, H100],
     policy: Union[
         NaivePolicy,
         BuildingBlockPolicy,
@@ -424,7 +423,7 @@ def get_tvm_source(
 def compile_and_run_kernel(
     rprog: rProg,
     op: Op,
-    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090, H100],
     policy: Union[
         NaivePolicy,
         BuildingBlockPolicy,
@@ -528,7 +527,7 @@ def eval_thread(
     rprog_idx: int,
     device_id: int,
     op: Op,
-    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090],
+    arch: Union[Arch, IPU, K80, MI50, V100, RTX4090, H100],
     policy: Union[
         NaivePolicy,
         BuildingBlockPolicy,
@@ -565,7 +564,7 @@ if __name__ == "__main__":
     expr = globals()[args.op]
     if args.fuse:
         expr = rewrite_expr(expr, args.shape, "fused_" + args.op)
-    arch = globals()[args.arch]()
+    arch = GPUDetector.create_gpu_instance()
     if args.use_tc:
         assert args.op == "matmul_expr"
     op = Op(expr, args.shape, args.data_type, args.use_tc)
