@@ -438,7 +438,7 @@ def compile_and_run_kernel(
     device_id,
     idx,
 ):
-    print("rProg: ", rprog.Dump())
+    print(f"rProg[{idx}]: {rprog.Dump()}")
     block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
     grid_size = rprog.GetParallelism(0)
     blocks = (block_size, 1, 1)
