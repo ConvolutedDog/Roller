@@ -590,10 +590,8 @@ if __name__ == "__main__":
                     if "Type" in lines[l] and "Time(%)" in lines[l]:
                         print(lines[l], end="")
                     if (
-                        "default_function_kernel0"
-                        if not LatestTVM
-                        else "main_kernel" in lines[l]
-                    ):
+                        "default_function_kernel0" if not LatestTVM else "main_kernel"
+                    ) in lines[l]:
                         print(lines[l])
                         break
 

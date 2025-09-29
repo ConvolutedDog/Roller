@@ -532,10 +532,8 @@ def compile_and_run_kernel(
                 if "Type" in lines[l] and "Time(%)" in lines[l]:
                     print(lines[l], end="")
                 if (
-                    "default_function_kernel0"
-                    if not LatestTVM
-                    else "main_kernel" in lines[l]
-                ):
+                    "default_function_kernel0" if not LatestTVM else "main_kernel"
+                ) in lines[l]:
                     print(lines[l])
                     break
 
@@ -685,7 +683,9 @@ if __name__ == "__main__":
     if LatestTVM:
         print(
             "Best perf: {} TFLOPS".format(
-                tvm.tir.analysis.estimate_tir_flops(rprogs[0].sche.mod) / best_time * 1e-9
+                tvm.tir.analysis.estimate_tir_flops(rprogs[0].sche.mod)
+                / best_time
+                * 1e-9
             )
         )
     print("Best idx: {}".format(best_idx))
