@@ -22,13 +22,15 @@ run_benchmarks() {
         python -u test_op.py --gen_check_code --backend tvm --topk 1 --code_dir generated_source/conv --smem_tiling --reg_tiling --codegen_input_reg_tiling --shared_fetch_vectorize --data_type "float16" --op fused_conv_expr_S1D1P1 --shape 128 128 28 28 128 3 3
         
         # Run matmul benchmarks
-        echo "Running matmul_expr (float16) with tensor cores..."
-        python -u test_op.py --gen_check_code --backend tvm --topk 1 --code_dir generated_source/matmul --smem_tiling --reg_tiling --codegen_input_reg_tiling --shared_fetch_vectorize --use_tc --data_type "float16" --op matmul_expr --shape 1024 1024 1024
+        echo "Running matmul_expr (float32)..."
+        python -u test_op.py --gen_check_code --backend tvm --topk 1 --code_dir generated_source/matmul --smem_tiling --reg_tiling --codegen_input_reg_tiling --shared_fetch_vectorize --data_type "float32" --op matmul_expr --shape 1024 1024 1024
     fi
     
     # Only test the profiling functionality on RTX 4090, the rightness of the matmul_expr has been tested on GV100.
-    echo "Running matmul_expr (float32)..."
-    python -u test_op.py --gen_check_code --backend tvm --topk 1 --code_dir generated_source/matmul --smem_tiling --reg_tiling --codegen_input_reg_tiling --shared_fetch_vectorize --data_type "float32" --op matmul_expr --shape 1024 1024 1024
+    if [[ "$device_name" == "NVIDIA RTX 4090" ]]; then
+        echo "Running matmul_expr (float16) with tensor cores..."
+        python -u test_op.py --gen_check_code --backend tvm --topk 1 --code_dir generated_source/matmul --smem_tiling --reg_tiling --codegen_input_reg_tiling --shared_fetch_vectorize --use_tc --data_type "float16" --op matmul_expr --shape 1024 1024 1024
+    fi
     
     echo ""
 }
