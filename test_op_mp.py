@@ -175,7 +175,8 @@ def main_template(
         for d in dim:
             size *= d
         byte = size * type_size
-        s_size += "    int output_size" + str(i) + " = " + str(size) + ";\n"
+        if args.gen_check_code:
+            s_size += "    int output_size" + str(i) + " = " + str(size) + ";\n"
         s_hmalloc += "    " + name + "h = (float*)malloc(" + str(byte) + ");\n"
         s_hfree += "    free(" + name + "h);\n"
         s_dmalloc += "    cudaMalloc((void **)&" + name + "d, " + str(byte) + ");\n"
@@ -189,25 +190,26 @@ def main_template(
             + str(byte)
             + ", cudaMemcpyDeviceToHost);\n"
         )
-        s_simple_check += (
-            "    float same_res = "
-            + name
-            + "h[0];\n"
-            + "    for (int i = 1; i < output_size"
-            + str(i)
-            + "; ++i)\n"
-            + "    {\n"
-            "        if ("
-            + name
-            + "h[i] != same_res)\n"
-            + "        {\n"
-            + '            printf("output[%d] = %f\\n", i, '
-            + name
-            + "h[i]);\n"
-            + "            exit(1);\n"
-            + "        }\n"
-            + "    }\n"
-        )
+        if args.gen_check_code:
+            s_simple_check += (
+                "    float same_res = "
+                + name
+                + "h[0];\n"
+                + "    for (int i = 1; i < output_size"
+                + str(i)
+                + "; ++i)\n"
+                + "    {\n"
+                "        if ("
+                + name
+                + "h[i] != same_res)\n"
+                + "        {\n"
+                + '            printf("output[%d] = %f\\n", i, '
+                + name
+                + "h[i]);\n"
+                + "            exit(1);\n"
+                + "        }\n"
+                + "    }\n"
+            )
 
     if backend == "antares":
         kernel_name = "template_op_kernel0"
@@ -438,7 +440,7 @@ def compile_and_run_kernel(
     device_id,
     idx,
 ):
-    print(f"rProg[{idx}]: {rprog.Dump()}")
+    print(f"[{idx}] rProg: ", rprog.Dump())
     block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
     grid_size = rprog.GetParallelism(0)
     blocks = (block_size, 1, 1)
@@ -518,8 +520,22 @@ def compile_and_run_kernel(
     os.system("rm {}.cu".format(file_name))
 
     with open(log_name, "r") as f:
-        for line in f.readlines():
-            print(line, end="")
+        print("Profiling result:")
+        lines = f.readlines()
+        if compute_capability >= "80":
+            for l in range(len(lines)):
+                if "Time (%)" in lines[l] and "Instances" in lines[l]:
+                    print(lines[l] + lines[l + 2])
+                    break
+        else:
+            for l in range(len(lines)):
+                if "Type" in lines[l] and "Time(%)" in lines[l]:
+                    print(lines[l], end="")
+                if (
+                    "default_function_kernel0" if not LatestTVM else "main_kernel"
+                ) in lines[l]:
+                    print(lines[l])
+                    break
 
     exec_time = get_time_from_nvprof_file(log_name)
     os.system("rm {}".format(log_name))
@@ -564,6 +580,7 @@ def eval_thread(
 
 
 if __name__ == "__main__":
+    printBanner(row_symbol="=", col_symbol="||", length=100, context="Namespace")
     print(args)
     expr = globals()[args.op]
     if args.fuse:
@@ -613,11 +630,21 @@ if __name__ == "__main__":
         rprog.AddTile(0, rTile0)
 
         rprogs = [rprog]
-        print("-------------------use artificial rtile---------------------------")
+        printBanner(
+            row_symbol="-", col_symbol="|", length=100, context="Use artificial rtile"
+        )
     else:
+        printBanner(
+            row_symbol="-", col_symbol="|", length=100, context="Emiting configs"
+        )
         rprogs = policy.emit_config_without_trails(args.topk)
 
-    print("Evaluating top {} configs".format(len(rprogs)))
+    printBanner(
+        row_symbol="-",
+        col_symbol="|",
+        length=100,
+        context="Evaluating top {} configs".format(len(rprogs)),
+    )
 
     rprog_idx = alloc_configs_for_subprocess(args.num_threads, len(rprogs))
     threads = []
@@ -650,8 +677,17 @@ if __name__ == "__main__":
 
     eval_time = time.time() - start_time
 
+    printBanner(row_symbol="v", col_symbol="|", length=100, context="Perf Report")
     print("Top1 time: {} ms".format(top1_time))
     print("Top10 time: {} ms".format(best_time))
+    if LatestTVM:
+        print(
+            "Best perf: {} TFLOPS".format(
+                tvm.tir.analysis.estimate_tir_flops(rprogs[0].sche.mod)
+                / best_time
+                * 1e-9
+            )
+        )
     print("Best idx: {}".format(best_idx))
     print("Best config: {}".format(rprogs[best_idx].Dump()))
     print("Top1 compile time: {} s".format(emit_time))

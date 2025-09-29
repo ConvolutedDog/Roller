@@ -33,6 +33,8 @@ else:
 
 compute_capability = tvm.runtime.cuda(0).compute_version.replace(".", "")
 
+Backend = Literal["tvm", "antares"]
+
 
 def deprecated(exit_immediately=True):
     """Deprecated decorator"""
@@ -282,4 +284,20 @@ class MyThread(Thread):
             return None
 
 
-Backend = Literal["tvm", "antares"]
+def printBanner(
+    row_symbol: str = "=", col_symbol: str = "||", length: int = 100, context: str = ""
+):
+    banner = row_symbol * length
+    start_end_border = col_symbol
+    all_white_space_len = len(banner) - 2 * len(start_end_border) - len(context)
+    white_space_prefix = " " * (all_white_space_len // 2)
+    white_space_suffix = " " * (all_white_space_len - len(white_space_prefix))
+    print(banner)
+    print(
+        start_end_border
+        + white_space_prefix
+        + context
+        + white_space_suffix
+        + start_end_border
+    )
+    print(banner)

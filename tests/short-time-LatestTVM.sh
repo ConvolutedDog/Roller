@@ -9,9 +9,9 @@ run_benchmarks() {
     local gpu_id=$1
     local device_name=$2
     
-    echo "========================================"
+    echo "===================================================================="
     echo "Running benchmarks on $device_name (CUDA_VISIBLE_DEVICES=$gpu_id)"
-    echo "========================================"
+    echo "===================================================================="
     
     export CUDA_VISIBLE_DEVICES=$gpu_id
     

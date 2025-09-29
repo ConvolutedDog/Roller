@@ -171,7 +171,8 @@ def main_template(
         for d in dim:
             size *= d
         byte = size * type_size
-        s_size += "    int output_size" + str(i) + " = " + str(size) + ";\n"
+        if args.gen_check_code:
+            s_size += "    int output_size" + str(i) + " = " + str(size) + ";\n"
         s_hmalloc += "    " + name + "h = (float*)malloc(" + str(byte) + ");\n"
         s_hfree += "    free(" + name + "h);\n"
         s_dmalloc += "    cudaMalloc((void **)&" + name + "d, " + str(byte) + ");\n"
@@ -185,25 +186,26 @@ def main_template(
             + str(byte)
             + ", cudaMemcpyDeviceToHost);\n"
         )
-        s_simple_check += (
-            "    float same_res = "
-            + name
-            + "h[0];\n"
-            + "    for (int i = 1; i < output_size"
-            + str(i)
-            + "; ++i)\n"
-            + "    {\n"
-            "        if ("
-            + name
-            + "h[i] != same_res)\n"
-            + "        {\n"
-            + '            printf("output[%d] = %f\\n", i, '
-            + name
-            + "h[i]);\n"
-            + "            exit(1);\n"
-            + "        }\n"
-            + "    }\n"
-        )
+        if args.gen_check_code:
+            s_simple_check += (
+                "    float same_res = "
+                + name
+                + "h[0];\n"
+                + "    for (int i = 1; i < output_size"
+                + str(i)
+                + "; ++i)\n"
+                + "    {\n"
+                "        if ("
+                + name
+                + "h[i] != same_res)\n"
+                + "        {\n"
+                + '            printf("output[%d] = %f\\n", i, '
+                + name
+                + "h[i]);\n"
+                + "            exit(1);\n"
+                + "        }\n"
+                + "    }\n"
+            )
 
     if backend == "antares":
         kernel_name = "template_op_kernel0"
@@ -426,6 +428,7 @@ def get_tvm_source(
 
 
 if __name__ == "__main__":
+    printBanner(row_symbol="=", col_symbol="||", length=100, context="Namespace")
     print(args)
     expr = globals()[args.op]
     if args.fuse:
@@ -474,11 +477,21 @@ if __name__ == "__main__":
         rprog.AddTile(0, rTile0)
 
         rprogs = [rprog]
-        print("-------------------use artificial rtile---------------------------")
+        printBanner(
+            row_symbol="-", col_symbol="|", length=100, context="Use artificial rtile"
+        )
     else:
+        printBanner(
+            row_symbol="-", col_symbol="|", length=100, context="Emiting configs"
+        )
         rprogs = policy.emit_config_without_trails(args.topk)
 
-    print("Evaluating top {} configs".format(len(rprogs)))
+    printBanner(
+        row_symbol="-",
+        col_symbol="|",
+        length=100,
+        context="Evaluating top {} configs".format(len(rprogs)),
+    )
     best_idx = -1
     best_time = 1e100
     idx = 0
@@ -488,7 +501,7 @@ if __name__ == "__main__":
     bar_id = 0
     dtype = "float16" if args.use_tc else "float32"
     for rprog in rprogs:
-        print(f"rProg[{idx}]: {rprog.Dump()}")
+        print(f"[{rprogs.index(rprog)}] rProg: ", rprog.Dump())
         block_size = rprog.GetParallelism(1) * (32 if args.use_tc else 1)
         grid_size = rprog.GetParallelism(0)
         blocks = (block_size, 1, 1)
@@ -565,8 +578,22 @@ if __name__ == "__main__":
         os.system("rm {}.cu".format(file_name))
 
         with open(log_name, "r") as f:
-            for line in f.readlines():
-                print(line, end="")
+            print("Profiling result:")
+            lines = f.readlines()
+            if compute_capability >= "80":
+                for l in range(len(lines)):
+                    if "Time (%)" in lines[l] and "Instances" in lines[l]:
+                        print(lines[l] + lines[l + 2])
+                        break
+            else:
+                for l in range(len(lines)):
+                    if "Type" in lines[l] and "Time(%)" in lines[l]:
+                        print(lines[l], end="")
+                    if (
+                        "default_function_kernel0" if not LatestTVM else "main_kernel"
+                    ) in lines[l]:
+                        print(lines[l])
+                        break
 
         exec_time = get_time_from_nvprof_file(log_name)
         os.system("rm {}".format(log_name))
@@ -591,12 +618,22 @@ if __name__ == "__main__":
             evals.append(eval_results)
             bar_id += 1
 
+    printBanner(row_symbol="v", col_symbol="|", length=100, context="Perf Report")
     for topx, eval_results in zip(eval_bar, evals):
         print("Eval top {} configs".format(topx))
         print("Compilation time: {}s".format(eval_results["compilation time"]))
         print("Best time: {}ms".format(eval_results["best time"]))
+        if LatestTVM:
+            print(
+                "Best perf: {} TFLOPS".format(
+                    tvm.tir.analysis.estimate_tir_flops(rprog.sche.mod)
+                    / eval_results["best time"]
+                    * 1e-9
+                )
+            )
         print("Best config: {}".format(eval_results["best config"]))
         print("Best idx: {}".format(eval_results["best idx"]))
+        print("-" * 100)
 
     cu_file_name = "roller_{}_{}.cu".format(
         args.op, "_".join([str(d) for d in args.shape])
